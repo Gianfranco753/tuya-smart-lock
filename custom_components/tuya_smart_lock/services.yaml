@@ -18,3 +18,8 @@ create_temp_password:
         number:
           min: 1
           max: 720
+get_dynamic_password:
+  target:
+    entity:
+      domain: lock
+      integration: tuya_smart_lock
