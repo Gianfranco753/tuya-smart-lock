@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 
 from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
-from .tuya_api import TuyaCloudApi
+from .tuya_api import TuyaApiError, TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,12 +40,16 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 region=user_input[CONF_API_REGION],
             )
 
-            if await api.async_test_credentials():
-                self._api = api
-                self._credentials = user_input
-                return await self.async_step_select_device()
-
-            errors["base"] = "invalid_auth"
+            try:
+                credentials_ok = await api.async_test_credentials()
+            except TuyaApiError:
+                errors["base"] = "cannot_connect"
+            else:
+                if credentials_ok:
+                    self._api = api
+                    self._credentials = user_input
+                    return await self.async_step_select_device()
+                errors["base"] = "invalid_auth"
 
         return self.async_show_form(
             step_id="user",
@@ -74,28 +78,35 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     break
 
             # Check remote unlock is enabled
-            remote_ok = await self._api.async_check_remote_unlock(device_id)
-            if not remote_ok:
-                errors["base"] = "remote_unlock_disabled"
+            try:
+                remote_ok = await self._api.async_check_remote_unlock(device_id)
+            except TuyaApiError:
+                errors["base"] = "cannot_connect"
             else:
-                # Set unique ID and check not already configured
-                await self.async_set_unique_id(device_id)
-                self._abort_if_unique_id_configured()
+                if not remote_ok:
+                    errors["base"] = "remote_unlock_disabled"
+                else:
+                    # Set unique ID and check not already configured
+                    await self.async_set_unique_id(device_id)
+                    self._abort_if_unique_id_configured()
 
-                return self.async_create_entry(
-                    title=device_name,
-                    data={
-                        CONF_ACCESS_ID: self._credentials[CONF_ACCESS_ID],
-                        CONF_ACCESS_SECRET: self._credentials[CONF_ACCESS_SECRET],
-                        CONF_API_REGION: self._credentials[CONF_API_REGION],
-                        CONF_DEVICE_ID: device_id,
-                        CONF_DEVICE_NAME: device_name,
-                    },
-                )
+                    return self.async_create_entry(
+                        title=device_name,
+                        data={
+                            CONF_ACCESS_ID: self._credentials[CONF_ACCESS_ID],
+                            CONF_ACCESS_SECRET: self._credentials[CONF_ACCESS_SECRET],
+                            CONF_API_REGION: self._credentials[CONF_API_REGION],
+                            CONF_DEVICE_ID: device_id,
+                            CONF_DEVICE_NAME: device_name,
+                        },
+                    )
 
         # Discover devices
         if not self._discovered_devices:
-            self._discovered_devices = await self._api.async_discover_devices()
+            try:
+                self._discovered_devices = await self._api.async_discover_devices()
+            except TuyaApiError:
+                return self.async_abort(reason="cannot_connect")
 
         if not self._discovered_devices:
             return self.async_abort(reason="no_devices_found")

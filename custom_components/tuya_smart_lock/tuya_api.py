@@ -23,6 +23,10 @@ from .crypto import decrypt_ticket_key, encrypt_password
 _LOGGER = logging.getLogger(__name__)
 
 
+class TuyaApiError(Exception):
+    """Raised when a Tuya API request fails at the network level."""
+
+
 class TuyaCloudApi:
     """Tuya Cloud API client for lock operations."""
 
@@ -63,9 +67,18 @@ class TuyaCloudApi:
             "secret": self._access_secret,
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                data = await resp.json()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    data = await resp.json()
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Network error getting Tuya token: %s", err)
+            raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
+        except TimeoutError as err:
+            _LOGGER.error("Timeout getting Tuya token")
+            raise TuyaApiError("Timeout connecting to Tuya Cloud API") from err
 
         if not data.get("success"):
             _LOGGER.error("Failed to get Tuya token: %s", data.get("msg"))
@@ -104,19 +117,33 @@ class TuyaCloudApi:
         body_str = json.dumps(body) if body else ""
         headers = self._sign_request(method, path, body_str)
 
-        async with aiohttp.ClientSession() as session:
-            if method == "GET":
-                async with session.get(url, headers=headers) as resp:
-                    return await resp.json()
-            else:
-                async with session.post(url, headers=headers, data=body_str) as resp:
-                    return await resp.json()
+        try:
+            async with aiohttp.ClientSession() as session:
+                timeout = aiohttp.ClientTimeout(total=10)
+                if method == "GET":
+                    async with session.get(url, headers=headers, timeout=timeout) as resp:
+                        return await resp.json()
+                else:
+                    async with session.post(
+                        url, headers=headers, data=body_str, timeout=timeout
+                    ) as resp:
+                        return await resp.json()
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Network error calling Tuya API (%s): %s", path, err)
+            raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
+        except TimeoutError as err:
+            _LOGGER.error("Timeout calling Tuya API (%s)", path)
+            raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({path})") from err
 
     async def async_test_credentials(self) -> bool:
-        """Test if the credentials are valid."""
+        """Test if the credentials are valid.
+
+        Raises TuyaApiError if the network itself fails, so the caller
+        can tell "wrong credentials" apart from "cannot reach Tuya cloud".
+        """
+        self._token = None
+        self._token_expiry = 0
         try:
-            self._token = None
-            self._token_expiry = 0
             await self._ensure_token()
             return True
         except ConnectionError:

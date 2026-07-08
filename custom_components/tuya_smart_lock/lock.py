@@ -15,6 +15,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 
+from .tuya_api import TuyaApiError
+
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_AUTO_LOCK_DELAY = 3
@@ -81,7 +83,12 @@ class TuyaSmartLock(LockEntity):
         self._attr_is_locking = True
         self.async_write_ha_state()
 
-        success = await self._api.async_lock(self._device_id)
+        try:
+            success = await self._api.async_lock(self._device_id)
+        except (TuyaApiError, ConnectionError) as err:
+            self._attr_is_locking = False
+            self.async_write_ha_state()
+            raise HomeAssistantError(f"Could not lock the door: {err}") from err
 
         self._attr_is_locking = False
         if success:
@@ -93,7 +100,12 @@ class TuyaSmartLock(LockEntity):
         self._attr_is_unlocking = True
         self.async_write_ha_state()
 
-        success = await self._api.async_unlock(self._device_id)
+        try:
+            success = await self._api.async_unlock(self._device_id)
+        except (TuyaApiError, ConnectionError) as err:
+            self._attr_is_unlocking = False
+            self.async_write_ha_state()
+            raise HomeAssistantError(f"Could not unlock the door: {err}") from err
 
         self._attr_is_unlocking = False
         if success:
@@ -119,9 +131,12 @@ class TuyaSmartLock(LockEntity):
         effective_time = int(now.timestamp())
         invalid_time = int((now + timedelta(hours=duration_hours)).timestamp())
 
-        success = await self._api.async_create_temp_password(
-            self._device_id, code, name, effective_time, invalid_time
-        )
+        try:
+            success = await self._api.async_create_temp_password(
+                self._device_id, code, name, effective_time, invalid_time
+            )
+        except (TuyaApiError, ConnectionError) as err:
+            raise HomeAssistantError(f"Could not create temporary password '{name}': {err}") from err
 
         if not success:
             raise HomeAssistantError(f"Failed to create temporary password '{name}'")
