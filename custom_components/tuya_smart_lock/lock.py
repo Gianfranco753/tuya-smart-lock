@@ -1,11 +1,17 @@
 """Lock entity for Tuya Smart Lock."""
 
 import logging
+from datetime import timedelta
+
+import voluptuous as vol
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 
