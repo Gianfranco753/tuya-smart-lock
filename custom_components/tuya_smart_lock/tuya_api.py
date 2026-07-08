@@ -308,3 +308,18 @@ class TuyaCloudApi:
             return None
 
         return resp.get("result", {}).get("dynamic_password")
+
+    async def async_get_battery_level(self, device_id: str) -> int | None:
+        """Get battery percentage from device status."""
+        path = STATUS_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("GET", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to get battery level: %s", resp.get("msg"))
+            return None
+
+        for dp in resp.get("result", []):
+            if dp["code"] in ("battery_percentage", "residual_electricity"):
+                return dp["value"]
+
+        return None
