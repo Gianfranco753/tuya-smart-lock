@@ -1,17 +1,31 @@
 """Tuya Smart Lock integration."""
 
 import logging
+from datetime import timedelta
+
+import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_platform
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, DOMAIN
+from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, CONF_DEVICE_ID, DOMAIN
 from .tuya_api import TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.LOCK]
+
+SERVICE_CREATE_TEMP_PASSWORD = "create_temp_password"
+
+SERVICE_CREATE_TEMP_PASSWORD_SCHEMA = {
+    vol.Required("code"): str,
+    vol.Required("name"): str,
+    vol.Required("duration_hours"): vol.Coerce(int),
+}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

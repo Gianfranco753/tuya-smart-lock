@@ -33,6 +33,16 @@ async def async_setup_entry(
 
     async_add_entities([TuyaSmartLock(api, device_id, device_name, auto_lock_time)])
 
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        "create_temp_password",
+        {
+            vol.Required("code"): str,
+            vol.Required("name"): str,
+            vol.Required("duration_hours"): vol.Coerce(int),
+        },
+        "async_create_temp_password",
+    )
 
 class TuyaSmartLock(LockEntity):
     """Lock entity that controls a Tuya smart lock via Cloud API."""
@@ -94,3 +104,15 @@ class TuyaSmartLock(LockEntity):
         self._attr_is_locked = True
         self.async_write_ha_state()
 
+    async def async_create_temp_password(self, code: str, name: str, duration_hours: int) -> None:
+        """Create a temporary password on the lock."""
+        now = dt_util.utcnow()
+        effective_time = int(now.timestamp())
+        invalid_time = int((now + timedelta(hours=duration_hours)).timestamp())
+
+        success = await self._api.async_create_temp_password(
+            self._device_id, code, name, effective_time, invalid_time
+        )
+
+        if not success:
+            raise HomeAssistantError(f"Failed to create temporary password '{name}'")

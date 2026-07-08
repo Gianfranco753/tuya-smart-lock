@@ -15,7 +15,10 @@ from .const import (
     REMOTE_UNLOCKS_ENDPOINT,
     STATUS_ENDPOINT,
     TICKET_ENDPOINT,
+    TEMP_PASSWORD_ENDPOINT,
 )
+
+from .crypto import decrypt_ticket_key, encrypt_password
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,3 +236,36 @@ class TuyaCloudApi:
                 return dp["value"]
 
         return None
+
+    async def async_create_temp_password(
+        self, device_id: str, password: str, name: str,
+        effective_time: int, invalid_time: int,
+    ) -> bool:
+        """Create a temporary password on the lock."""
+        path = TICKET_ENDPOINT.format(device_id=device_id)
+        ticket_resp = await self._request("POST", path)
+        if not ticket_resp.get("success"):
+            _LOGGER.error("Failed to get ticket: %s", ticket_resp.get("msg"))
+            return False
+
+        ticket_id = ticket_resp["result"]["ticket_id"]
+        ticket_key = ticket_resp["result"]["ticket_key"]
+
+        real_key = decrypt_ticket_key(ticket_key, self._access_secret)
+        encrypted_pwd = encrypt_password(password, real_key)
+
+        path = TEMP_PASSWORD_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("POST", path, {
+            "password": encrypted_pwd,
+            "password_type": "ticket",
+            "ticket_id": ticket_id,
+            "name": name,
+            "effective_time": effective_time,
+            "invalid_time": invalid_time,
+        })
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to create temp password: %s", resp.get("msg"))
+            return False
+
+        return True
