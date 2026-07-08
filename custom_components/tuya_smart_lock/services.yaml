@@ -23,3 +23,5 @@ get_dynamic_password:
     entity:
       domain: lock
       integration: tuya_smart_lock
+  response:
+    optional: false
