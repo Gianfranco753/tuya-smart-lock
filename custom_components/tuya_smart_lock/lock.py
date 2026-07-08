@@ -7,7 +7,7 @@ import voluptuous as vol
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -54,6 +54,12 @@ async def async_setup_entry(
             vol.Required("duration_hours"): vol.Coerce(int),
         },
         "async_create_temp_password",
+    )
+    platform.async_register_entity_service(
+        "get_dynamic_password",
+        {},
+        "async_get_dynamic_password",
+        supports_response=SupportsResponse.ONLY,
     )
 
 class TuyaSmartLock(LockEntity):
@@ -144,3 +150,15 @@ class TuyaSmartLock(LockEntity):
         
         if not success:
             raise HomeAssistantError(f"Failed to create temporary password '{name}'")
+    
+    async def async_get_dynamic_password(self) -> ServiceResponse:
+        """Get a dynamic password. Valid ~5 minutes, works even if the lock is offline."""
+        try:
+            password = await self._api.async_get_dynamic_password(self._device_id)
+        except (TuyaApiError, ConnectionError) as err:
+            raise HomeAssistantError(f"Could not get dynamic password: {err}") from err
+
+        if not password:
+            raise HomeAssistantError("Tuya did not return a dynamic password")
+
+        return {"dynamic_password": password}

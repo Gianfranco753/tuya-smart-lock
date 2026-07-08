@@ -11,6 +11,7 @@ import aiohttp
 from .const import (
     API_REGIONS,
     DOOR_OPERATE_ENDPOINT,
+    DYNAMIC_PASSWORD_ENDPOINT,
     LOCK_CATEGORIES,
     REMOTE_UNLOCKS_ENDPOINT,
     STATUS_ENDPOINT,
@@ -296,3 +297,14 @@ class TuyaCloudApi:
             return False
 
         return True
+    
+    async def async_get_dynamic_password(self, device_id: str) -> str | None:
+        """Get a short-lived dynamic password (valid ~5 minutes, works offline)."""
+        path = DYNAMIC_PASSWORD_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("GET", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to get dynamic password: %s", resp.get("msg"))
+            return None
+
+        return resp.get("result", {}).get("dynamic_password")
