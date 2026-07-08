@@ -23,6 +23,32 @@ Tuya Smart Lock uses the Cloud API ticket-based flow to send lock/unlock command
 
 The lock entity is linked to your existing Tuya device in Home Assistant. It appears alongside the `binary_sensor` from the official Tuya integration, all grouped under the same device.
 
+## Temporary passwords
+
+Besides lock/unlock, this integration exposes a service to create temporary unlock codes on your lock via the Tuya Cloud API.
+
+**Service:** `tuya_smart_lock.create_temp_password`
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `code` | string | Numeric code to set on the lock |
+| `name` | string | Label for the password (e.g. guest name) |
+| `duration_hours` | number | How many hours the code stays valid |
+
+Example automation:
+
+```yaml
+action: tuya_smart_lock.create_temp_password
+target:
+  entity_id: lock.puerta_principal
+data:
+  code: "4821"
+  name: "Repartidor"
+  duration_hours: 2
+```
+
+⚠️ Password creation on the lock is asynchronous — a successful service call means Tuya accepted the request, not that the lock has confirmed it yet. Check the Tuya / Smart Life app if the code doesn't work immediately.
+
 ## Prerequisites
 
 Before installing, you need to set up a few things on the Tuya IoT Platform. This takes about 10 minutes.
