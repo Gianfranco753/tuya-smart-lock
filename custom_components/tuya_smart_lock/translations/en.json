@@ -48,5 +48,25 @@
         }
       }
     }
+  },
+  "services": {
+    "create_temp_password": {
+      "name": "Create temporary password",
+      "description": "Creates a temporary unlock code on the lock.",
+      "fields": {
+        "code": {
+          "name": "Code",
+          "description": "The numeric code to set."
+        },
+        "name": {
+          "name": "Name",
+          "description": "A label for this password (e.g. guest name)."
+        },
+        "duration_hours": {
+          "name": "Duration (hours)",
+          "description": "How many hours the code stays valid."
+        }
+      }
+    }
   }
 }

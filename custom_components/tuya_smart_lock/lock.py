@@ -130,13 +130,13 @@ class TuyaSmartLock(LockEntity):
         now = dt_util.utcnow()
         effective_time = int(now.timestamp())
         invalid_time = int((now + timedelta(hours=duration_hours)).timestamp())
-
+        
         try:
             success = await self._api.async_create_temp_password(
                 self._device_id, code, name, effective_time, invalid_time
             )
         except (TuyaApiError, ConnectionError) as err:
             raise HomeAssistantError(f"Could not create temporary password '{name}': {err}") from err
-
+        
         if not success:
             raise HomeAssistantError(f"Failed to create temporary password '{name}'")
