@@ -8,7 +8,7 @@ import voluptuous as vol
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -35,7 +35,11 @@ async def async_setup_entry(
     device_name = entry_data[CONF_DEVICE_NAME]
 
     # Read auto_lock_time from device
-    auto_lock_time = await api.async_get_auto_lock_time(device_id)
+    try:
+        auto_lock_time = await api.async_get_auto_lock_time(device_id)
+    except (TuyaApiError, ConnectionError) as err:
+        raise ConfigEntryNotReady(f"Cannot reach Tuya Cloud API: {err}") from err
+
     if auto_lock_time is None:
         auto_lock_time = DEFAULT_AUTO_LOCK_DELAY
 
