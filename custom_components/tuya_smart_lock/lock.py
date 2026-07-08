@@ -112,6 +112,9 @@ class TuyaSmartLock(LockEntity):
 
     async def async_create_temp_password(self, code: str, name: str, duration_hours: int) -> None:
         """Create a temporary password on the lock."""
+        if not code.isdigit():
+            raise HomeAssistantError("El código debe ser numérico")
+
         now = dt_util.utcnow()
         effective_time = int(now.timestamp())
         invalid_time = int((now + timedelta(hours=duration_hours)).timestamp())
