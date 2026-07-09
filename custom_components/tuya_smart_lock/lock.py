@@ -61,6 +61,21 @@ async def async_setup_entry(
         "async_get_dynamic_password",
         supports_response=SupportsResponse.ONLY,
     )
+    platform.async_register_entity_service(
+        "delete_temp_password",
+        {vol.Required("password_id"): str},
+        "async_delete_temp_password",
+    )
+    platform.async_register_entity_service(
+        "freeze_temp_password",
+        {vol.Required("password_id"): str},
+        "async_freeze_temp_password",
+    )
+    platform.async_register_entity_service(
+        "unfreeze_temp_password",
+        {vol.Required("password_id"): str},
+        "async_unfreeze_temp_password",
+    )
 
 class TuyaSmartLock(LockEntity):
     """Lock entity that controls a Tuya smart lock via Cloud API."""
@@ -162,3 +177,33 @@ class TuyaSmartLock(LockEntity):
             raise HomeAssistantError("Tuya did not return a dynamic password")
 
         return {"dynamic_password": password}
+
+    async def async_delete_temp_password(self, password_id: str) -> None:
+        """Delete a temporary password from the lock."""
+        try:
+            success = await self._api.async_delete_temp_password(self._device_id, password_id)
+        except (TuyaApiError, ConnectionError) as err:
+            raise HomeAssistantError(f"Could not delete password '{password_id}': {err}") from err
+
+        if not success:
+            raise HomeAssistantError(f"Failed to delete password '{password_id}'")
+
+    async def async_freeze_temp_password(self, password_id: str) -> None:
+        """Freeze a temporary password (Zigbee locks only)."""
+        try:
+            success = await self._api.async_freeze_temp_password(self._device_id, password_id)
+        except (TuyaApiError, ConnectionError) as err:
+            raise HomeAssistantError(f"Could not freeze password '{password_id}': {err}") from err
+
+        if not success:
+            raise HomeAssistantError(f"Failed to freeze password '{password_id}'")
+
+    async def async_unfreeze_temp_password(self, password_id: str) -> None:
+        """Unfreeze a temporary password (Zigbee locks only)."""
+        try:
+            success = await self._api.async_unfreeze_temp_password(self._device_id, password_id)
+        except (TuyaApiError, ConnectionError) as err:
+            raise HomeAssistantError(f"Could not unfreeze password '{password_id}': {err}") from err
+
+        if not success:
+            raise HomeAssistantError(f"Failed to unfreeze password '{password_id}'")

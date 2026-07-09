@@ -12,11 +12,15 @@ from .const import (
     API_REGIONS,
     DOOR_OPERATE_ENDPOINT,
     DYNAMIC_PASSWORD_ENDPOINT,
+    FREEZE_PASSWORD_ENDPOINT,
     LOCK_CATEGORIES,
     REMOTE_UNLOCKS_ENDPOINT,
     STATUS_ENDPOINT,
+    TEMP_PASSWORD_DELETE_ENDPOINT,
+    TEMP_PASSWORDS_LIST_ENDPOINT,
     TICKET_ENDPOINT,
     TEMP_PASSWORD_ENDPOINT,
+    UNFREEZE_PASSWORD_ENDPOINT,
 )
 
 from .crypto import decrypt_ticket_key, encrypt_password
@@ -121,14 +125,14 @@ class TuyaCloudApi:
         try:
             async with aiohttp.ClientSession() as session:
                 timeout = aiohttp.ClientTimeout(total=10)
-                if method == "GET":
-                    async with session.get(url, headers=headers, timeout=timeout) as resp:
-                        return await resp.json()
-                else:
-                    async with session.post(
-                        url, headers=headers, data=body_str, timeout=timeout
-                    ) as resp:
-                        return await resp.json()
+                async with session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    data=body_str if body_str else None,
+                    timeout=timeout,
+                ) as resp:
+                    return await resp.json()
         except aiohttp.ClientError as err:
             _LOGGER.error("Network error calling Tuya API (%s): %s", path, err)
             raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
@@ -323,3 +327,47 @@ class TuyaCloudApi:
                 return dp["value"]
 
         return None
+
+    async def async_list_temp_passwords(self, device_id: str) -> list[dict]:
+        """List temporary passwords currently configured on the lock."""
+        path = TEMP_PASSWORDS_LIST_ENDPOINT.format(device_id=device_id) + "?valid=true"
+        resp = await self._request("GET", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to list temp passwords: %s", resp.get("msg"))
+            return []
+
+        return resp.get("result", [])
+
+    async def async_delete_temp_password(self, device_id: str, password_id: str) -> bool:
+        """Delete a temporary password from the lock."""
+        path = TEMP_PASSWORD_DELETE_ENDPOINT.format(device_id=device_id, password_id=password_id)
+        resp = await self._request("DELETE", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to delete temp password %s: %s", password_id, resp.get("msg"))
+            return False
+
+        return True
+
+    async def async_freeze_temp_password(self, device_id: str, password_id: str) -> bool:
+        """Freeze a temporary password (Zigbee locks only)."""
+        path = FREEZE_PASSWORD_ENDPOINT.format(device_id=device_id, password_id=password_id)
+        resp = await self._request("PUT", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to freeze temp password %s: %s", password_id, resp.get("msg"))
+            return False
+
+        return True
+
+    async def async_unfreeze_temp_password(self, device_id: str, password_id: str) -> bool:
+        """Unfreeze a temporary password (Zigbee locks only)."""
+        path = UNFREEZE_PASSWORD_ENDPOINT.format(device_id=device_id, password_id=password_id)
+        resp = await self._request("PUT", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to unfreeze temp password %s: %s", password_id, resp.get("msg"))
+            return False
+
+        return True

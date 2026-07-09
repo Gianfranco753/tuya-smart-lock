@@ -51,6 +51,36 @@
     "get_dynamic_password": {
       "name": "Get dynamic password",
       "description": "Gets a short-lived dynamic password (valid ~5 minutes). Works even if the lock is offline."
+    },
+    "delete_temp_password": {
+      "name": "Delete temporary password",
+      "description": "Deletes a temporary password from the lock.",
+      "fields": {
+        "password_id": {
+          "name": "Password ID",
+          "description": "The password_id shown in the temporary passwords sensor's attributes."
+        }
+      }
+    },
+    "freeze_temp_password": {
+      "name": "Freeze temporary password",
+      "description": "Freezes a temporary password without deleting it (Zigbee locks only).",
+      "fields": {
+        "password_id": {
+          "name": "Password ID",
+          "description": "The password_id shown in the temporary passwords sensor's attributes."
+        }
+      }
+    },
+    "unfreeze_temp_password": {
+      "name": "Unfreeze temporary password",
+      "description": "Reactivates a previously frozen temporary password (Zigbee locks only).",
+      "fields": {
+        "password_id": {
+          "name": "Password ID",
+          "description": "The password_id shown in the temporary passwords sensor's attributes."
+        }
+      }
     }
   }
 }
