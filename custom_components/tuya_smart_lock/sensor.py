@@ -39,10 +39,6 @@ async def async_setup_entry(
     async_add_entities([
         TuyaLockBattery(status_coordinator, device_id, device_name),
         TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
-    ])
-    async_add_entities([
-        TuyaLockBattery(status_coordinator, device_id, device_name),
-        TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
         TuyaLockLastAlarm(status_coordinator, device_id, device_name),
     ])
 
