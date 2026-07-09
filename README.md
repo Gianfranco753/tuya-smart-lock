@@ -111,6 +111,36 @@ data:
 
 ⚠️ **Freeze/unfreeze only works on Zigbee locks**, per Tuya's documentation. On Wi-Fi or Bluetooth locks, these calls will fail with an error from Tuya — use `delete_temp_password` instead to revoke access.
 
+## Security and status sensors
+
+| Entity | Type | What it shows |
+|--------|------|----------------|
+| `binary_sensor.<lock>_tamper` | `binary_sensor` (tamper) | On if the lock reports a hijack/tamper alert |
+| `binary_sensor.<lock>_doorbell` | `binary_sensor` | On if the doorbell was recently pressed |
+| `sensor.<lock>_last_alarm` | `sensor` (diagnostic) | Last alarm code reported (e.g. `wrong_password`, `wrong_finger`) |
+| `event.<lock>_unlock_history` | `event` | Fires each time a new unlock is detected, with method (fingerprint/password/card/etc.), `unlock_name`, and `user_name` |
+
+⚠️ All of these are poll-based, not real-time push:
+- Tamper, doorbell, and last alarm refresh every 5 minutes (shared with the battery sensor).
+- Unlock history refreshes every 2 minutes — a brief doorbell press or an unlock could be missed or reported up to 2 minutes late if it happens between polls.
+
+Example automation using the unlock history event:
+
+```yaml
+trigger:
+  - platform: event
+    event_type: state_changed
+    event_data:
+      entity_id: event.puerta_principal_unlock_history
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.new_state.attributes.event_type == 'fingerprint' }}"
+action:
+  - action: notify.mobile_app
+    data:
+      message: "Door unlocked with fingerprint by {{ trigger.event.data.new_state.attributes.unlock_name }}"
+```
+
 ## Prerequisites
 
 Before installing, you need to set up a few things on the Tuya IoT Platform. This takes about 10 minutes.

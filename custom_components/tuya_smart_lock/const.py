@@ -38,3 +38,4 @@ TEMP_PASSWORDS_LIST_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwor
 TEMP_PASSWORD_DELETE_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}"
 FREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}/freeze-password"
 UNFREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}/unfreeze-password"
+RECORDS_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/records"

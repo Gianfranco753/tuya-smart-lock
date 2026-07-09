@@ -141,7 +141,7 @@ class TuyaCloudApi:
             raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({path})") from err
 
     async def async_get_status(self, device_id: str) -> list[dict]:
-        """Get the raw list of status datapoints for a device.
+        """Get the raw list efof status datapoints for a device.
 
         Raises TuyaApiError on failure so DataUpdateCoordinator can convert
         it into UpdateFailed / ConfigEntryNotReady as appropriate.
@@ -342,3 +342,15 @@ class TuyaCloudApi:
             return False
 
         return True
+
+    async def async_get_unlock_records(self, device_id: str, page_size: int = 5) -> list[dict]:
+        """Get the most recent unlock/alarm records for a device."""
+        path = RECORDS_ENDPOINT.format(device_id=device_id)
+        path += f"?pageNo=1&pageSize={page_size}&startTime=0&endTime=0"
+        resp = await self._request("GET", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to get unlock records: %s", resp.get("msg"))
+            raise TuyaApiError(f"Tuya returned an error: {resp.get('msg')}")
+
+        return resp.get("result", {}).get("records", [])

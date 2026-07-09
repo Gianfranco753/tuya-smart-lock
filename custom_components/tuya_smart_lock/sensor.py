@@ -8,6 +8,7 @@ from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 
@@ -38,6 +39,11 @@ async def async_setup_entry(
     async_add_entities([
         TuyaLockBattery(status_coordinator, device_id, device_name),
         TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
+    ])
+    async_add_entities([
+        TuyaLockBattery(status_coordinator, device_id, device_name),
+        TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
+        TuyaLockLastAlarm(status_coordinator, device_id, device_name),
     ])
 
 
@@ -123,3 +129,32 @@ class TuyaLockTempPasswords(CoordinatorEntity, SensorEntity):
                 for p in self._active_passwords
             ]
         }
+
+class TuyaLockLastAlarm(CoordinatorEntity, SensorEntity):
+    """Last alarm/error condition reported by the lock (e.g. wrong_password)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Last alarm"
+    _attr_icon = "mdi:alert-circle-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator)
+        self._device_id = device_id
+        self._attr_unique_id = f"tuya_smart_lock_{device_id}_last_alarm"
+        self._device_name = device_name
+
+    @property
+    def device_info(self):
+        """Link to the same device as the lock entity."""
+        return {
+            "identifiers": {("tuya", self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tuya",
+        }
+
+    @property
+    def native_value(self):
+        """Return the last reported alarm code, if any."""
+        data = self.coordinator.data or {}
+        return data.get("alarm_lock")
