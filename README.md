@@ -211,6 +211,7 @@ If your lock device uses the Tuya ticket-based unlock flow, it should work. If i
 - **Cloud-only**: Tuya locks do not support local control. Commands go through the Tuya Cloud API. If your internet is down, you can still use the physical keypad/badge/fingerprint on the device itself.
 - **API trial renewal**: IoT Core and Smart Lock Open Service are free but require renewal approximately every 6 months on iot.tuya.com.
 - **Optimistic state**: State updates are optimistic with post-command verification (polls the cloud 5 seconds after a command). There is no real-time push from the device.
+- **Polling intervals**: Battery level and lock status are refreshed every 5 minutes. The temporary passwords list is refreshed every hour. These are separate polling cycles — a coordinator dedicated to device status (battery, lock state) and one dedicated to password management — so a burst of Tuya API activity from one doesn't affect the other's freshness or cost.
 
 ## Troubleshooting
 

@@ -8,7 +8,7 @@ import voluptuous as vol
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
-from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -31,17 +31,13 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     api = data["api"]
     entry_data = data["entry_data"]
+    status_coordinator = data["status_coordinator"]
     device_id = entry_data[CONF_DEVICE_ID]
     device_name = entry_data[CONF_DEVICE_NAME]
 
-    # Read auto_lock_time from device
-    try:
-        auto_lock_time = await api.async_get_auto_lock_time(device_id)
-    except (TuyaApiError, ConnectionError) as err:
-        raise ConfigEntryNotReady(f"Cannot reach Tuya Cloud API: {err}") from err
-
-    if auto_lock_time is None:
-        auto_lock_time = DEFAULT_AUTO_LOCK_DELAY
+    # auto_lock_time now comes from the shared status coordinator instead
+    # of its own dedicated API call.
+    auto_lock_time = status_coordinator.data.get("auto_lock_time", DEFAULT_AUTO_LOCK_DELAY)
 
     async_add_entities([TuyaSmartLock(api, device_id, device_name, auto_lock_time)])
 
@@ -76,7 +72,6 @@ async def async_setup_entry(
         {vol.Required("password_id"): str},
         "async_unfreeze_temp_password",
     )
-
 class TuyaSmartLock(LockEntity):
     """Lock entity that controls a Tuya smart lock via Cloud API."""
 

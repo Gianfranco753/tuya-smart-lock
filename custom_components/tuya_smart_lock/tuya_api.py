@@ -140,6 +140,21 @@ class TuyaCloudApi:
             _LOGGER.error("Timeout calling Tuya API (%s)", path)
             raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({path})") from err
 
+    async def async_get_status(self, device_id: str) -> list[dict]:
+        """Get the raw list of status datapoints for a device.
+
+        Raises TuyaApiError on failure so DataUpdateCoordinator can convert
+        it into UpdateFailed / ConfigEntryNotReady as appropriate.
+        """
+        path = STATUS_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("GET", path)
+
+        if not resp.get("success"):
+            _LOGGER.error("Failed to get status: %s", resp.get("msg"))
+            raise TuyaApiError(f"Tuya returned an error: {resp.get('msg')}")
+
+        return resp.get("result", [])
+
     async def async_test_credentials(self) -> bool:
         """Test if the credentials are valid.
 
@@ -198,20 +213,6 @@ class TuyaCloudApi:
 
         return False
 
-    async def async_get_auto_lock_time(self, device_id: str) -> int | None:
-        """Get the auto-lock delay in seconds from device status."""
-        path = STATUS_ENDPOINT.format(device_id=device_id)
-        resp = await self._request("GET", path)
-
-        if not resp.get("success"):
-            return None
-
-        for dp in resp.get("result", []):
-            if dp["code"] == "auto_lock_time":
-                return dp["value"]
-
-        return None
-
     async def async_unlock(self, device_id: str) -> bool:
         """Unlock the door via ticket flow."""
         path = TICKET_ENDPOINT.format(device_id=device_id)
@@ -253,21 +254,6 @@ class TuyaCloudApi:
 
         _LOGGER.info("Door %s locked successfully", device_id)
         return True
-
-    async def async_get_lock_state(self, device_id: str) -> bool | None:
-        """Get lock_motor_state. Returns True if unlocked, False if locked, None on error."""
-        path = STATUS_ENDPOINT.format(device_id=device_id)
-        resp = await self._request("GET", path)
-
-        if not resp.get("success"):
-            _LOGGER.error("Failed to get status: %s", resp.get("msg"))
-            return None
-
-        for dp in resp.get("result", []):
-            if dp["code"] == "lock_motor_state":
-                return dp["value"]
-
-        return None
 
     async def async_create_temp_password(
         self, device_id: str, password: str, name: str,
@@ -312,21 +298,6 @@ class TuyaCloudApi:
             return None
 
         return resp.get("result", {}).get("dynamic_password")
-
-    async def async_get_battery_level(self, device_id: str) -> int | None:
-        """Get battery percentage from device status."""
-        path = STATUS_ENDPOINT.format(device_id=device_id)
-        resp = await self._request("GET", path)
-
-        if not resp.get("success"):
-            _LOGGER.error("Failed to get battery level: %s", resp.get("msg"))
-            return None
-
-        for dp in resp.get("result", []):
-            if dp["code"] in ("battery_percentage", "residual_electricity"):
-                return dp["value"]
-
-        return None
 
     async def async_list_temp_passwords(self, device_id: str) -> list[dict]:
         """List temporary passwords currently configured on the lock."""
