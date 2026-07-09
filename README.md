@@ -15,14 +15,6 @@ The official Home Assistant Tuya integration uses the `tuya-device-sharing-sdk` 
 
 Tuya Smart Lock uses the Cloud API ticket-based flow to send lock/unlock commands — the same mechanism the Tuya and Smart Life mobile apps use.
 
-## What you get
-
-| Entity | Type | What it does |
-|--------|------|--------------|
-| Lock | `lock` | Lock and unlock your door via Tuya Cloud API |
-
-The lock entity is linked to your existing Tuya device in Home Assistant. It appears alongside the `binary_sensor` from the official Tuya integration, all grouped under the same device.
-
 Besides lock/unlock, two additional services are available on the lock entity:
 
 | Service | What it does |
@@ -80,6 +72,44 @@ Then use `{{ resultado.dynamic_password }}` in the next step (e.g. to send it vi
 ⚠️ The dynamic password is valid for approximately 5 minutes only. Generate it right before you need to share it — don't generate it in advance.
 
 ⚠️ Applicable lock types per Tuya's documentation: All-in-one Wi-Fi lock, Bluetooth lock, Bluetooth fittings. Support may vary by device category — if your lock doesn't support it, the service call will fail with Tuya's error message in the log.
+
+## Managing temporary passwords
+
+Two entities and three services let you inspect and manage the temporary passwords currently configured on the lock.
+
+### Sensor: temporary passwords list
+
+**Entity:** `sensor.<your_lock>_temporary_passwords`
+
+The sensor's state is the count of active passwords. The full list — with `password_id`, `name`, `phase`, `effective_time`, and `invalid_time` for each password — is available in the `passwords` attribute.
+
+Check **Developer Tools → States** to find the `password_id` you need for the services below.
+
+### Delete a password
+
+**Service:** `tuya_smart_lock.delete_temp_password`
+
+```yaml
+action: tuya_smart_lock.delete_temp_password
+target:
+  entity_id: lock.puerta_principal
+data:
+  password_id: "3351004"
+```
+
+### Freeze / unfreeze a password
+
+**Services:** `tuya_smart_lock.freeze_temp_password`, `tuya_smart_lock.unfreeze_temp_password`
+
+```yaml
+action: tuya_smart_lock.freeze_temp_password
+target:
+  entity_id: lock.puerta_principal
+data:
+  password_id: "3351004"
+```
+
+⚠️ **Freeze/unfreeze only works on Zigbee locks**, per Tuya's documentation. On Wi-Fi or Bluetooth locks, these calls will fail with an error from Tuya — use `delete_temp_password` instead to revoke access.
 
 ## Prerequisites
 

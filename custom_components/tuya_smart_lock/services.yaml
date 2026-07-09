@@ -25,3 +25,33 @@ get_dynamic_password:
       integration: tuya_smart_lock
   response:
     optional: false
+delete_temp_password:
+  target:
+    entity:
+      domain: lock
+      integration: tuya_smart_lock
+  fields:
+    password_id:
+      required: true
+      selector:
+        text:
+freeze_temp_password:
+  target:
+    entity:
+      domain: lock
+      integration: tuya_smart_lock
+  fields:
+    password_id:
+      required: true
+      selector:
+        text:
+unfreeze_temp_password:
+  target:
+    entity:
+      domain: lock
+      integration: tuya_smart_lock
+  fields:
+    password_id:
+      required: true
+      selector:
+        text:
