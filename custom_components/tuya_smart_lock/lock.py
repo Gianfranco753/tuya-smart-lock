@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 
-from .tuya_api import TuyaApiError
+from .api import TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
 
