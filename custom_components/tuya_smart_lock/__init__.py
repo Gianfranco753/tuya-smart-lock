@@ -12,7 +12,7 @@ from .coordinator import (
     TuyaLockStatusCoordinator,
     TuyaLockTempPasswordsCoordinator,
 )
-from .tuya_api import TuyaCloudApi
+from .api import TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
 
