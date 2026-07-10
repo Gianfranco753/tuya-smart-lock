@@ -32,4 +32,3 @@ async def async_setup_entry(
         TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
         TuyaLockLastAlarm(status_coordinator, device_id, device_name),
     ])
-s
