@@ -106,7 +106,7 @@ class TuyaApiClient:
             "Content-Type": "application/json",
         }
 
-async def _request(
+    async def _request(
         self, method: str, path: str, body: dict | None = None, params: dict | None = None,
     ) -> dict:
         """Make a signed request to the Tuya API.
