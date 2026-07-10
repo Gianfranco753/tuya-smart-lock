@@ -106,12 +106,27 @@ class TuyaApiClient:
             "Content-Type": "application/json",
         }
 
-    async def _request(self, method: str, path: str, body: dict | None = None) -> dict:
-        """Make a signed request to the Tuya API."""
+async def _request(
+        self, method: str, path: str, body: dict | None = None, params: dict | None = None,
+    ) -> dict:
+        """Make a signed request to the Tuya API.
+
+        If params is given, it's sorted alphabetically by key before being
+        appended to the path — Tuya's signature algorithm requires the
+        exact same alphabetically-sorted query string to be used both for
+        signing and for the actual request URL, or the server rejects the
+        request with "sign invalid".
+        """
         await self._ensure_token()
-        url = f"{self._base_url}{path}"
+
+        full_path = path
+        if params:
+            sorted_query = "&".join(f"{k}={params[k]}" for k in sorted(params))
+            full_path = f"{path}?{sorted_query}"
+
+        url = f"{self._base_url}{full_path}"
         body_str = json.dumps(body) if body else ""
-        headers = self._sign_request(method, path, body_str)
+        headers = self._sign_request(method, full_path, body_str)
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -125,8 +140,8 @@ class TuyaApiClient:
                 ) as resp:
                     return await resp.json()
         except aiohttp.ClientError as err:
-            _LOGGER.error("Network error calling Tuya API (%s): %s", path, err)
+            _LOGGER.error("Network error calling Tuya API (%s): %s", full_path, err)
             raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
         except TimeoutError as err:
-            _LOGGER.error("Timeout calling Tuya API (%s)", path)
-            raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({path})") from err
+            _LOGGER.error("Timeout calling Tuya API (%s)", full_path)
+            raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({full_path})") from err

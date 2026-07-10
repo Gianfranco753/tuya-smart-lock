@@ -65,8 +65,8 @@ class PasswordsMixin:
 
     async def async_list_temp_passwords(self, device_id: str) -> list[dict]:
         """List temporary passwords currently configured on the lock."""
-        path = TEMP_PASSWORDS_LIST_ENDPOINT.format(device_id=device_id) + "?valid=true"
-        resp = await self._request("GET", path)
+        path = TEMP_PASSWORDS_LIST_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("GET", path, params={"valid": "true"})
 
         if not resp.get("success"):
             _LOGGER.error("Failed to list temp passwords: %s", resp.get("msg"))
