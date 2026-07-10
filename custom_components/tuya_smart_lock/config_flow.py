@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 
 from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
-from .tuya_api import TuyaApiError, TuyaCloudApi
+from .api import TuyaApiError, TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
 
