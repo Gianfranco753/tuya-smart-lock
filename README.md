@@ -120,7 +120,9 @@ data:
 | `binary_sensor.<lock>_anti_lock` | `binary_sensor` (diagnostic) | On when anti-lock-from-outside is engaged — outside handle/keypad is blocked |
 | `binary_sensor.<lock>_remote_unlock_enabled` | `binary_sensor` (diagnostic) | On when remote unlock is enabled on the device; if it turns off, HA lock commands stop working |
 | `sensor.<lock>_last_alarm` | `sensor` (diagnostic) | Last alarm code reported (e.g. `wrong_password`, `wrong_finger`) |
+| `sensor.<lock>_alarm_records` | `sensor` (diagnostic) | Count of alarm records fetched from the Tuya API. The `records` attribute holds a timestamped list of each alarm event (type, user, time) — useful for building a history card or automation conditions |
 | `sensor.<lock>_fingerprint_attempts` | `sensor` (diagnostic) | Running count of fingerprint scan attempts |
+| `number.<lock>_auto_lock_time` | `number` | Auto-lock delay in seconds (range 1–120). The lock re-latches automatically this many seconds after an unlock. Changes take effect on the next unlock without restarting HA |
 | `event.<lock>_unlock_history` | `event` | Fires each time a new unlock is detected, with method (fingerprint/password/card/gesture/etc.), `unlock_name`, and `user_name` |
 | `event.<lock>_alarm` | `event` | Fires each time the lock reports an alarm — one event per attempt, even for repeated identical alarms |
 | `switch.<lock>_normal_open` | `switch` | Toggles "always open" mode — lock stays retracted regardless of handle (e.g. business hours on access-control doors) |
@@ -239,6 +241,17 @@ The integration will automatically discover lock devices linked to your Tuya acc
 
 If you have multiple locks, add the integration once per device.
 
+### Adjusting poll intervals (optional)
+
+After setup, you can tune how often the integration polls the Tuya API without removing and re-adding the integration.
+
+1. Go to **Settings** > **Integrations** > find **Tuya Smart Lock**
+2. Click **Configure**
+3. Adjust the intervals:
+   - **Status poll interval** (1–60 min, default 5 min) — how often device status (battery, door state, sensors) is refreshed from the API. Real-time Pulsar updates are unaffected by this — polling is only a fallback.
+   - **Unlock records poll interval** (1–10 min, default 2 min) — how often unlock history is refreshed. A Pulsar message on a physical unlock triggers an immediate refresh regardless of this setting.
+4. Click **Submit** — the integration reloads automatically with the new intervals.
+
 ## Supported devices
 
 **Tested:**
@@ -273,6 +286,17 @@ If your lock device uses the Tuya ticket-based unlock flow, it should work. If i
 | No devices found during setup | Make sure your app account is linked and your device is a supported lock category. |
 | Unlock command succeeds but door doesn't open | Enable Remote Unlock in the Tuya / Smart Life app settings for your device. |
 | `invalid_auth` during setup | Double-check your Access ID and Access Secret. Make sure you're using the credentials from the correct project. |
+| Alarm records sensor shows 0 but alarms have occurred | The `alarm_records` sensor polls every 10 minutes. Trigger a manual refresh via **Developer Tools** > **Services** > `homeassistant.update_entity`. |
+
+### Diagnostics
+
+If you report an issue, you can attach a diagnostics snapshot (your Access Secret is automatically redacted):
+
+1. Go to **Settings** > **Integrations** > find **Tuya Smart Lock**
+2. Click the **three-dot menu** on the integration card
+3. Select **Download diagnostics**
+
+The downloaded file includes coordinator health (last update time, record counts), device details (model, firmware), and the current configuration — without any secrets.
 
 ## Support
 
