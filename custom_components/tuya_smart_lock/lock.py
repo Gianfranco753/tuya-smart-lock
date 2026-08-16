@@ -1,5 +1,6 @@
 """Lock entity for Tuya Smart Lock."""
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -102,6 +103,7 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
         self._attr_is_locking = False
         self._attr_is_unlocking = False
         self._device_name = device_name
+        self._relock_handle: asyncio.TimerHandle | None = None
 
     @property
     def device_info(self):
@@ -176,10 +178,19 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
             auto_lock_time = (self.coordinator.data or {}).get(
                 "auto_lock_time", DEFAULT_AUTO_LOCK_DELAY
             )
-            self.hass.loop.call_later(auto_lock_time + 1, self._set_locked)
+            if self._relock_handle is not None:
+                self._relock_handle.cancel()
+            self._relock_handle = self.hass.loop.call_later(auto_lock_time + 1, self._set_locked)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel any pending relock timer when the entity is removed."""
+        if self._relock_handle is not None:
+            self._relock_handle.cancel()
+            self._relock_handle = None
 
     def _set_locked(self) -> None:
         """Fallback: reset state to locked after the auto-lock delay."""
+        self._relock_handle = None
         self._attr_is_locked = True
         self.async_write_ha_state()
 

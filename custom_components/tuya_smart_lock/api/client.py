@@ -1,5 +1,6 @@
 """Low-level HTTP client for the Tuya Cloud API: auth, signing, requests."""
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -7,6 +8,7 @@ import logging
 import time
 
 import aiohttp
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ..const import API_REGIONS
 
@@ -26,64 +28,70 @@ class TuyaApiClient:
     "lock" or a "password" is.
     """
 
-    def __init__(self, access_id: str, access_secret: str, region: str = "eu") -> None:
+    def __init__(self, access_id: str, access_secret: str, region: str = "eu", hass=None) -> None:
         self._access_id = access_id
         self._access_secret = access_secret
         self._base_url = f"https://{API_REGIONS[region]}"
+        self._hass = hass
         self._token: str | None = None
         self._token_expiry: float = 0
         self._uid: str | None = None
+        # Prevents two concurrent callers from both refreshing an expired token.
+        self._token_lock = asyncio.Lock()
 
     async def _ensure_token(self) -> None:
         """Get or refresh the access token."""
-        if self._token and time.time() < self._token_expiry:
-            return
+        async with self._token_lock:
+            if self._token and time.time() < self._token_expiry:
+                return
 
-        url = f"{self._base_url}/v1.0/token?grant_type=1"
-        t = str(int(time.time() * 1000))
+            url = f"{self._base_url}/v1.0/token?grant_type=1"
+            t = str(int(time.time() * 1000))
 
-        string_to_sign = (
-            "GET\n"
-            + hashlib.sha256(b"").hexdigest()
-            + "\n\n"
-            + "/v1.0/token?grant_type=1"
-        )
-        sign_str = self._access_id + t + string_to_sign
-        sign = hmac.new(
-            self._access_secret.encode(),
-            sign_str.encode(),
-            hashlib.sha256,
-        ).hexdigest().upper()
+            string_to_sign = (
+                "GET\n"
+                + hashlib.sha256(b"").hexdigest()
+                + "\n\n"
+                + "/v1.0/token?grant_type=1"
+            )
+            sign_str = self._access_id + t + string_to_sign
+            sign = hmac.new(
+                self._access_secret.encode(),
+                sign_str.encode(),
+                hashlib.sha256,
+            ).hexdigest().upper()
 
-        headers = {
-            "client_id": self._access_id,
-            "sign": sign,
-            "t": t,
-            "sign_method": "HMAC-SHA256",
-            "secret": self._access_secret,
-        }
+            headers = {
+                "client_id": self._access_id,
+                "sign": sign,
+                "t": t,
+                "sign_method": "HMAC-SHA256",
+                "secret": self._access_secret,
+            }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
+            session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
+            try:
+                cm = session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10))
+                async with cm as resp:
                     data = await resp.json()
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Network error getting Tuya token: %s", err)
-            raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
-        except TimeoutError as err:
-            _LOGGER.error("Timeout getting Tuya token")
-            raise TuyaApiError("Timeout connecting to Tuya Cloud API") from err
+            except aiohttp.ClientError as err:
+                _LOGGER.error("Network error getting Tuya token: %s", err)
+                raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
+            except TimeoutError as err:
+                _LOGGER.error("Timeout getting Tuya token")
+                raise TuyaApiError("Timeout connecting to Tuya Cloud API") from err
+            finally:
+                if not self._hass:
+                    await session.close()
 
-        if not data.get("success"):
-            _LOGGER.error("Failed to get Tuya token: %s", data.get("msg"))
-            raise ConnectionError(f"Tuya token error: {data.get('msg')}")
+            if not data.get("success"):
+                _LOGGER.error("Failed to get Tuya token: %s", data.get("msg"))
+                raise ConnectionError(f"Tuya token error: {data.get('msg')}")
 
-        result = data["result"]
-        self._token = result["access_token"]
-        self._token_expiry = time.time() + result["expire_time"] - 60
-        self._uid = result.get("uid")
+            result = data["result"]
+            self._token = result["access_token"]
+            self._token_expiry = time.time() + result["expire_time"] - 60
+            self._uid = result.get("uid")
 
     def _sign_request(self, method: str, path: str, body: str = "") -> dict:
         """Build signed headers for a Tuya API request."""
@@ -128,20 +136,24 @@ class TuyaApiClient:
         body_str = json.dumps(body) if body else ""
         headers = self._sign_request(method, full_path, body_str)
 
+        session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
         try:
-            async with aiohttp.ClientSession() as session:
-                timeout = aiohttp.ClientTimeout(total=10)
-                async with session.request(
-                    method,
-                    url,
-                    headers=headers,
-                    data=body_str if body_str else None,
-                    timeout=timeout,
-                ) as resp:
-                    return await resp.json()
+            timeout = aiohttp.ClientTimeout(total=10)
+            cm = session.request(
+                method,
+                url,
+                headers=headers,
+                data=body_str if body_str else None,
+                timeout=timeout,
+            )
+            async with cm as resp:
+                return await resp.json()
         except aiohttp.ClientError as err:
             _LOGGER.error("Network error calling Tuya API (%s): %s", full_path, err)
             raise TuyaApiError(f"Cannot reach Tuya Cloud API: {err}") from err
         except TimeoutError as err:
             _LOGGER.error("Timeout calling Tuya API (%s)", full_path)
             raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({full_path})") from err
+        finally:
+            if not self._hass:
+                await session.close()

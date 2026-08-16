@@ -56,6 +56,7 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 access_id=user_input[CONF_ACCESS_ID],
                 access_secret=user_input[CONF_ACCESS_SECRET],
                 region=user_input[CONF_API_REGION],
+                hass=self.hass,
             )
 
             try:

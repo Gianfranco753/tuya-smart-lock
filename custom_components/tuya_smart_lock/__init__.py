@@ -75,6 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         access_id=entry.data[CONF_ACCESS_ID],
         access_secret=entry.data[CONF_ACCESS_SECRET],
         region=entry.data[CONF_API_REGION],
+        hass=hass,
     )
     device_id = entry.data[CONF_DEVICE_ID]
 
@@ -105,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         access_id=entry.data[CONF_ACCESS_ID],
         access_secret=entry.data[CONF_ACCESS_SECRET],
         region=entry.data[CONF_API_REGION],
+        hass=hass,
         on_max_backoff=_make_disconnect_callback(hass, notification_id),
         on_reconnect=_make_reconnect_callback(hass, notification_id),
     )

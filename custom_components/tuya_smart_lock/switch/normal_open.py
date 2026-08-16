@@ -30,6 +30,7 @@ class TuyaLockNormalOpenSwitch(CoordinatorEntity, SwitchEntity):
         self._device_id = device_id
         self._attr_unique_id = f"tuya_smart_lock_{device_id}_normal_open"
         self._device_name = device_name
+        self._optimistic_on: bool | None = None
 
     @property
     def device_info(self):
@@ -41,8 +42,14 @@ class TuyaLockNormalOpenSwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
+        if self._optimistic_on is not None:
+            return self._optimistic_on
         data = self.coordinator.data or {}
         return bool(data.get("normal_open_switch", False))
+
+    def _handle_coordinator_update(self) -> None:
+        self._optimistic_on = None
+        self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
         await self._send("normal_open_switch", True)
@@ -58,3 +65,6 @@ class TuyaLockNormalOpenSwitch(CoordinatorEntity, SwitchEntity):
 
         if not success:
             raise HomeAssistantError("Tuya rejected the normal open command")
+
+        self._optimistic_on = value
+        self.async_write_ha_state()

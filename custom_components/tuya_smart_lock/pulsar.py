@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 import aiohttp
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,12 +78,14 @@ class TuyaOpenPulsar:
         access_id: str,
         access_secret: str,
         region: str,
+        hass=None,
         on_max_backoff: SimpleCallback | None = None,
         on_reconnect: SimpleCallback | None = None,
     ) -> None:
         self._access_id = access_id
         self._access_secret = access_secret
         self._region = region
+        self._hass = hass
         self._handlers: list[MessageHandler] = []
         self._task: asyncio.Task | None = None
         self._on_max_backoff = on_max_backoff
@@ -136,19 +139,19 @@ class TuyaOpenPulsar:
 
     async def _run_session(self) -> None:
         auth = _build_auth_header(self._access_id, self._access_secret)
+        session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
 
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                self._ws_url(),
-                headers={"Authorization": auth},
-                heartbeat=30,
-            ) as ws:
-                _LOGGER.info("Tuya Pulsar WebSocket connected")
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await self._process_message(ws, msg.data)
-                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                        break
+        async with session.ws_connect(
+            self._ws_url(),
+            headers={"Authorization": auth},
+            heartbeat=30,
+        ) as ws:
+            _LOGGER.info("Tuya Pulsar WebSocket connected")
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    await self._process_message(ws, msg.data)
+                elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                    break
 
     async def _process_message(
         self, ws: aiohttp.ClientWebSocketResponse, raw: str
@@ -172,11 +175,11 @@ class TuyaOpenPulsar:
                 pv = str(biz_data.get("pv", "1.0"))
                 biz_data = json.loads(_decrypt_payload(biz_data["data"], pv, self._access_secret))
 
-            if message_id:
-                await ws.send_str(json.dumps({"messageId": message_id}))
-
             for handler in self._handlers:
                 await handler({**outer, "bizData": biz_data})
+
+            if message_id:
+                await ws.send_str(json.dumps({"messageId": message_id}))
 
         except Exception:
             _LOGGER.exception("Failed to process Pulsar message: %.200s", raw)

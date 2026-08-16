@@ -37,6 +37,7 @@ class TuyaLockAutoLockTime(CoordinatorEntity, NumberEntity):
         self._device_id = device_id
         self._attr_unique_id = f"tuya_smart_lock_{device_id}_auto_lock_time"
         self._device_name = device_name
+        self._optimistic_value: float | None = None
 
     @property
     def device_info(self):
@@ -48,9 +49,15 @@ class TuyaLockAutoLockTime(CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
+        if self._optimistic_value is not None:
+            return self._optimistic_value
         data = self.coordinator.data or {}
         value = data.get("auto_lock_time")
         return float(value) if value is not None else None
+
+    def _handle_coordinator_update(self) -> None:
+        self._optimistic_value = None
+        self.async_write_ha_state()
 
     async def async_set_native_value(self, value: float) -> None:
         try:
@@ -62,3 +69,6 @@ class TuyaLockAutoLockTime(CoordinatorEntity, NumberEntity):
 
         if not success:
             raise HomeAssistantError("Tuya rejected the auto-lock delay command")
+
+        self._optimistic_value = value
+        self.async_write_ha_state()
