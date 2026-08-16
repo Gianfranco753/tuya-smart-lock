@@ -40,6 +40,10 @@ FREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{
 UNFREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}/unfreeze-password"
 RECORDS_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/records"
 DEVICE_COMMAND_ENDPOINT = "/v1.0/iot-03/devices/{device_id}/commands"
+DEVICE_DETAILS_ENDPOINT = "/v1.0/devices/{device_id}"
+
+CONF_STATUS_INTERVAL = "status_interval"
+CONF_RECORDS_INTERVAL = "records_interval"
 
 # Dispatcher signal fired by the Pulsar handler each time alarm_lock appears
 # in a statusReport. Format with device_id before use.

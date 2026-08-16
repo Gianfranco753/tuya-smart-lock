@@ -2,7 +2,7 @@
 
 import logging
 
-from ..const import LOCK_CATEGORIES
+from ..const import DEVICE_DETAILS_ENDPOINT, LOCK_CATEGORIES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,3 +51,12 @@ class DiscoveryMixin:
                 })
 
         return devices
+
+    async def async_get_device_details(self, device_id: str) -> dict:
+        """Fetch model, firmware version, and other static info for a device."""
+        path = DEVICE_DETAILS_ENDPOINT.format(device_id=device_id)
+        resp = await self._request("GET", path)
+        if not resp.get("success"):
+            _LOGGER.warning("Could not fetch device details: %s", resp.get("msg"))
+            return {}
+        return resp.get("result", {})

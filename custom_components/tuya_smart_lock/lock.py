@@ -35,9 +35,9 @@ async def async_setup_entry(
     device_id = entry_data[CONF_DEVICE_ID]
     device_name = entry_data[CONF_DEVICE_NAME]
 
-    auto_lock_time = status_coordinator.data.get("auto_lock_time", DEFAULT_AUTO_LOCK_DELAY)
+    device_details = hass.data[DOMAIN][entry.entry_id].get("device_details", {})
 
-    async_add_entities([TuyaSmartLock(api, status_coordinator, device_id, device_name, auto_lock_time)])
+    async_add_entities([TuyaSmartLock(api, status_coordinator, device_id, device_name, device_details)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -92,11 +92,11 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(self, api, coordinator, device_id: str, device_name: str, auto_lock_time: int) -> None:
+    def __init__(self, api, coordinator, device_id: str, device_name: str, device_details: dict) -> None:
         super().__init__(coordinator)
         self._api = api
         self._device_id = device_id
-        self._auto_lock_time = auto_lock_time
+        self._device_details = device_details
         self._attr_unique_id = f"tuya_smart_lock_{device_id}"
         self._attr_is_locked = True
         self._attr_is_locking = False
@@ -106,11 +106,20 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
     @property
     def device_info(self):
         """Link to the existing Tuya device if present, otherwise create our own."""
-        return {
+        info = {
             "identifiers": {("tuya", self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tuya",
         }
+        if self._device_details:
+            model = self._device_details.get("model") or self._device_details.get("product_name")
+            if model:
+                info["model"] = model
+            if fw := self._device_details.get("firmware_ver"):
+                info["sw_version"] = fw
+            if hw := self._device_details.get("hw_ver"):
+                info["hw_version"] = hw
+        return info
 
     def _handle_coordinator_update(self) -> None:
         """Sync lock state from the device's open_close datapoint.
@@ -162,8 +171,12 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
 
         if success:
             # Fallback re-lock in case Pulsar doesn't deliver the close event.
-            delay = self._auto_lock_time + 1
-            self.hass.loop.call_later(delay, self._set_locked)
+            # Read auto_lock_time dynamically so changes via the number entity
+            # take effect immediately without restarting HA.
+            auto_lock_time = (self.coordinator.data or {}).get(
+                "auto_lock_time", DEFAULT_AUTO_LOCK_DELAY
+            )
+            self.hass.loop.call_later(auto_lock_time + 1, self._set_locked)
 
     def _set_locked(self) -> None:
         """Fallback: reset state to locked after the auto-lock delay."""

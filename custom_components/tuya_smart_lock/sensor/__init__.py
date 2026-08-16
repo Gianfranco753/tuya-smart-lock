@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
+from .alarm_records import TuyaLockAlarmRecords
 from .battery import TuyaLockBattery
 from .finger_input_times import TuyaLockFingerInputTimes
 from .last_alarm import TuyaLockLastAlarm
@@ -25,6 +26,7 @@ async def async_setup_entry(
     entry_data = data["entry_data"]
     status_coordinator = data["status_coordinator"]
     temp_passwords_coordinator = data["temp_passwords_coordinator"]
+    alarm_records_coordinator = data["alarm_records_coordinator"]
     device_id = entry_data[CONF_DEVICE_ID]
     device_name = entry_data[CONF_DEVICE_NAME]
 
@@ -33,4 +35,5 @@ async def async_setup_entry(
         TuyaLockTempPasswords(temp_passwords_coordinator, device_id, device_name),
         TuyaLockLastAlarm(status_coordinator, device_id, device_name),
         TuyaLockFingerInputTimes(status_coordinator, device_id, device_name),
+        TuyaLockAlarmRecords(alarm_records_coordinator, device_id, device_name),
     ])

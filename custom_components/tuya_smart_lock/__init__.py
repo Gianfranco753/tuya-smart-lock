@@ -1,6 +1,7 @@
 """Tuya Smart Lock integration."""
 
 import logging
+from datetime import timedelta
 
 from homeassistant.components.persistent_notification import async_create as pn_create
 from homeassistant.components.persistent_notification import async_dismiss as pn_dismiss
@@ -14,10 +15,13 @@ from .const import (
     CONF_ACCESS_SECRET,
     CONF_API_REGION,
     CONF_DEVICE_ID,
+    CONF_RECORDS_INTERVAL,
+    CONF_STATUS_INTERVAL,
     DOMAIN,
     SIGNAL_LOCK_ALARM,
 )
 from .coordinator import (
+    TuyaLockAlarmRecordsCoordinator,
     TuyaLockRecordsCoordinator,
     TuyaLockStatusCoordinator,
     TuyaLockTempPasswordsCoordinator,
@@ -33,12 +37,11 @@ PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.EVENT,
     Platform.SWITCH,
+    Platform.NUMBER,
 ]
 
 _PULSAR_DISCONNECT_NOTIFICATION_ID = "tuya_smart_lock_pulsar_disconnected_{}"
 
-# Unlock DPs trigger a records refresh so the unlock event entity fires with
-# full user detail within one API round-trip instead of up to 2 minutes.
 _UNLOCK_DP_CODES = {
     "unlock_fingerprint",
     "unlock_password",
@@ -49,8 +52,6 @@ _UNLOCK_DP_CODES = {
     "unlock_remote",
 }
 
-# Password management DPs trigger a temp-passwords refresh so the passwords
-# list stays current instead of lagging up to an hour.
 _PASSWORD_MGMT_DP_CODES = {
     "password_creat",
     "password_delete",
@@ -77,13 +78,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     device_id = entry.data[CONF_DEVICE_ID]
 
-    status_coordinator = TuyaLockStatusCoordinator(hass, api, device_id)
+    status_interval = timedelta(minutes=entry.options.get(CONF_STATUS_INTERVAL, 5))
+    records_interval = timedelta(minutes=entry.options.get(CONF_RECORDS_INTERVAL, 2))
+
+    status_coordinator = TuyaLockStatusCoordinator(hass, api, device_id, status_interval)
     temp_passwords_coordinator = TuyaLockTempPasswordsCoordinator(hass, api, device_id)
-    records_coordinator = TuyaLockRecordsCoordinator(hass, api, device_id)
+    records_coordinator = TuyaLockRecordsCoordinator(hass, api, device_id, records_interval)
+    alarm_records_coordinator = TuyaLockAlarmRecordsCoordinator(hass, api, device_id)
 
     await status_coordinator.async_config_entry_first_refresh()
     await temp_passwords_coordinator.async_config_entry_first_refresh()
     await records_coordinator.async_config_entry_first_refresh()
+    await alarm_records_coordinator.async_config_entry_first_refresh()
+
+    # Fetch static device details (model, firmware) for the device card.
+    # Non-critical: a failure here is logged but doesn't block setup.
+    try:
+        device_details = await api.async_get_device_details(device_id)
+    except Exception:
+        _LOGGER.warning("Could not fetch device details for %s", device_id)
+        device_details = {}
 
     notification_id = _PULSAR_DISCONNECT_NOTIFICATION_ID.format(entry.entry_id)
 
@@ -104,13 +118,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
         "entry_data": entry.data,
+        "device_details": device_details,
         "status_coordinator": status_coordinator,
         "temp_passwords_coordinator": temp_passwords_coordinator,
         "records_coordinator": records_coordinator,
+        "alarm_records_coordinator": alarm_records_coordinator,
         "pulsar": pulsar,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Reload the entry when the user saves new options so coordinators
+    # restart with the updated polling intervals.
+    entry.async_on_unload(
+        entry.add_update_listener(
+            lambda h, e: h.config_entries.async_reload(e.entry_id)
+        )
+    )
+
     return True
 
 
@@ -134,8 +159,6 @@ def _make_pulsar_handler(
     records_coordinator: TuyaLockRecordsCoordinator,
     temp_passwords_coordinator: TuyaLockTempPasswordsCoordinator,
 ):
-    """Return an async handler that routes Pulsar messages to the right coordinators."""
-
     async def _on_message(payload: dict) -> None:
         if payload.get("devId") != device_id:
             return
@@ -168,7 +191,6 @@ def _make_pulsar_handler(
 
 
 def _extract_status_list(biz_data) -> list:
-    """Pull the flat [{code, value}] list out of whatever shape bizData arrives in."""
     if isinstance(biz_data, dict):
         return biz_data.get("status", [])
     if isinstance(biz_data, list):

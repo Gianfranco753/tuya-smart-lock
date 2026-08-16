@@ -29,6 +29,18 @@
       "cannot_connect": "Cannot connect to Tuya Cloud API. Check your network and try again."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Polling intervals",
+        "description": "Changes take effect after Home Assistant reloads the integration.",
+        "data": {
+          "status_interval": "Status poll interval (minutes)",
+          "records_interval": "Unlock records poll interval (minutes)"
+        }
+      }
+    }
+  },
   "services": {
     "create_temp_password": {
       "name": "Create temporary password",

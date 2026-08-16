@@ -5,8 +5,18 @@ import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.core import callback
 
-from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
+from .const import (
+    CONF_ACCESS_ID,
+    CONF_ACCESS_SECRET,
+    CONF_API_REGION,
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_RECORDS_INTERVAL,
+    CONF_STATUS_INTERVAL,
+    DOMAIN,
+)
 from .api import TuyaApiError, TuyaCloudApi
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,6 +28,9 @@ REGIONS = {
     "in": "India",
 }
 
+_DEFAULT_STATUS_INTERVAL = 5
+_DEFAULT_RECORDS_INTERVAL = 2
+
 
 class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Tuya Smart Lock."""
@@ -28,6 +41,11 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._api: TuyaCloudApi | None = None
         self._credentials: dict = {}
         self._discovered_devices: list[dict] = []
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return TuyaSmartLockOptionsFlow()
 
     async def async_step_user(self, user_input: dict | None = None):
         """Step 1: Collect Tuya Cloud credentials."""
@@ -70,14 +88,12 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             device_id = user_input[CONF_DEVICE_ID]
 
-            # Find device name from discovered list
             device_name = device_id
             for device in self._discovered_devices:
                 if device["id"] == device_id:
                     device_name = device["name"]
                     break
 
-            # Check remote unlock is enabled
             try:
                 remote_ok = await self._api.async_check_remote_unlock(device_id)
             except TuyaApiError:
@@ -86,7 +102,6 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not remote_ok:
                     errors["base"] = "remote_unlock_disabled"
                 else:
-                    # Set unique ID and check not already configured
                     await self.async_set_unique_id(device_id)
                     self._abort_if_unique_id_configured()
 
@@ -101,7 +116,6 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-        # Discover devices
         if not self._discovered_devices:
             try:
                 self._discovered_devices = await self._api.async_discover_devices()
@@ -111,7 +125,6 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._discovered_devices:
             return self.async_abort(reason="no_devices_found")
 
-        # Build device selection list
         device_options = {
             device["id"]: f"{device['name']} ({device['category']})"
             for device in self._discovered_devices
@@ -125,4 +138,29 @@ class TuyaSmartLockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+
+class TuyaSmartLockOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for Tuya Smart Lock (polling intervals)."""
+
+    async def async_step_init(self, user_input: dict | None = None):
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+
+        current = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_STATUS_INTERVAL,
+                        default=current.get(CONF_STATUS_INTERVAL, _DEFAULT_STATUS_INTERVAL),
+                    ): vol.All(int, vol.Range(min=1, max=60)),
+                    vol.Optional(
+                        CONF_RECORDS_INTERVAL,
+                        default=current.get(CONF_RECORDS_INTERVAL, _DEFAULT_RECORDS_INTERVAL),
+                    ): vol.All(int, vol.Range(min=1, max=10)),
+                }
+            ),
         )

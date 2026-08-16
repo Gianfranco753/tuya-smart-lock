@@ -18,12 +18,18 @@ class TuyaLockStatusCoordinator(DataUpdateCoordinator[dict]):
     battery, tamper, doorbell, alarm, and any other status-derived entities.
     """
 
-    def __init__(self, hass: HomeAssistant, api: TuyaCloudApi, device_id: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        api: TuyaCloudApi,
+        device_id: str,
+        update_interval: timedelta = STATUS_UPDATE_INTERVAL,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
             name=f"tuya_smart_lock_status_{device_id}",
-            update_interval=STATUS_UPDATE_INTERVAL,
+            update_interval=update_interval,
         )
         self._api = api
         self._device_id = device_id
