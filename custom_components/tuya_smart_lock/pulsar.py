@@ -1,0 +1,163 @@
+"""Async WebSocket client for Tuya's Pulsar real-time message gateway."""
+
+import asyncio
+import base64
+import hashlib
+import json
+import logging
+from collections.abc import Awaitable, Callable
+
+import aiohttp
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+
+_LOGGER = logging.getLogger(__name__)
+
+PULSAR_WS_ENDPOINTS = {
+    "eu": "wss://mqe.tuyaeu.com/ws/v2/consumer/persistent",
+    "us": "wss://mqe.tuyaus.com/ws/v2/consumer/persistent",
+    "cn": "wss://mqe.tuyacn.com/ws/v2/consumer/persistent",
+    "in": "wss://mqe.tuyain.com/ws/v2/consumer/persistent",
+}
+
+_INITIAL_RECONNECT_DELAY = 5
+_MAX_RECONNECT_DELAY = 300
+
+MessageHandler = Callable[[dict], Awaitable[None]]
+
+
+def _build_auth_header(access_id: str, access_secret: str) -> str:
+    """Derive the Basic auth header Tuya's Pulsar WebSocket gateway expects."""
+    md5_secret = hashlib.md5(access_secret.encode()).hexdigest()
+    password = hashlib.md5((access_id + md5_secret).encode()).hexdigest()[8:24]
+    token = base64.b64encode(f"{access_id}:{password}".encode()).decode()
+    return f"Basic {token}"
+
+
+def _decrypt_payload(data: str, pv: str, access_secret: str) -> str:
+    """Decrypt a Tuya Pulsar message data field.
+
+    pv="2.0" uses AES-GCM with the first 16 bytes of access_secret as key.
+    pv="1.0" (and unversioned) uses AES-ECB with a key derived from
+    md5(access_secret)[8:24] — a separate derivation from the ticket-key
+    scheme in crypto.py.
+    """
+    raw = base64.b64decode(data)
+
+    if pv == "2.0":
+        key = access_secret[:16].encode()
+        nonce, tag, ciphertext = raw[:12], raw[-16:], raw[12:-16]
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        return cipher.decrypt_and_verify(ciphertext, tag).decode()
+
+    ecb_key = hashlib.md5(access_secret.encode()).hexdigest()[8:24].encode()
+    cipher = AES.new(ecb_key, AES.MODE_ECB)
+    return unpad(cipher.decrypt(raw), AES.block_size).decode()
+
+
+class TuyaOpenPulsar:
+    """Async WebSocket client for Tuya's Pulsar message gateway.
+
+    Uses aiohttp (a HA core dependency) so no extra pip packages are needed.
+    Registered handlers receive fully-decrypted device message dicts:
+
+      {
+        "devId": "abc123",
+        "bizCode": "statusReport",
+        "bizData": {"status": [{"code": "door_contact_status", "value": "open"}]},
+      }
+
+    The connection loop reconnects automatically with exponential backoff on
+    any error.
+    """
+
+    def __init__(self, access_id: str, access_secret: str, region: str) -> None:
+        self._access_id = access_id
+        self._access_secret = access_secret
+        self._region = region
+        self._handlers: list[MessageHandler] = []
+        self._task: asyncio.Task | None = None
+
+    def add_message_handler(self, handler: MessageHandler) -> None:
+        self._handlers.append(handler)
+
+    async def start(self) -> None:
+        self._task = asyncio.create_task(self._connect_with_backoff())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    def _ws_url(self) -> str:
+        base = PULSAR_WS_ENDPOINTS[self._region]
+        return (
+            f"{base}/{self._access_id}/out/event/{self._access_id}-sub"
+            "?ackTimeoutMillis=3000&subscriptionType=Failover"
+        )
+
+    async def _connect_with_backoff(self) -> None:
+        delay = _INITIAL_RECONNECT_DELAY
+        while True:
+            try:
+                await self._run_session()
+                delay = _INITIAL_RECONNECT_DELAY
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                _LOGGER.warning(
+                    "Pulsar WebSocket disconnected (%s), reconnecting in %ds", err, delay
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _MAX_RECONNECT_DELAY)
+
+    async def _run_session(self) -> None:
+        auth = _build_auth_header(self._access_id, self._access_secret)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self._ws_url(),
+                headers={"Authorization": auth},
+                heartbeat=30,
+            ) as ws:
+                _LOGGER.info("Tuya Pulsar WebSocket connected")
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self._process_message(ws, msg.data)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                        break
+
+    async def _process_message(
+        self, ws: aiohttp.ClientWebSocketResponse, raw: str
+    ) -> None:
+        try:
+            envelope = json.loads(raw)
+            message_id = envelope.get("messageId")
+
+            payload_b64 = envelope.get("payload")
+            if not payload_b64:
+                return
+
+            outer = json.loads(base64.b64decode(payload_b64))
+            biz_data = outer.get("bizData")
+
+            if isinstance(biz_data, str):
+                # Old protocol: bizData is an AES-ECB encrypted string
+                biz_data = json.loads(_decrypt_payload(biz_data, "1.0", self._access_secret))
+            elif isinstance(biz_data, dict) and "data" in biz_data:
+                # New protocol: bizData = {"pv": "2.0", "t": ..., "data": "<encrypted>"}
+                pv = str(biz_data.get("pv", "1.0"))
+                biz_data = json.loads(_decrypt_payload(biz_data["data"], pv, self._access_secret))
+
+            if message_id:
+                await ws.send_str(json.dumps({"messageId": message_id}))
+
+            for handler in self._handlers:
+                await handler({**outer, "bizData": biz_data})
+
+        except Exception:
+            _LOGGER.exception("Failed to process Pulsar message: %.200s", raw)

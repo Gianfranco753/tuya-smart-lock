@@ -3,7 +3,7 @@
 import logging
 from datetime import timedelta
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from ..api import TuyaApiError, TuyaCloudApi
@@ -36,3 +36,10 @@ class TuyaLockStatusCoordinator(DataUpdateCoordinator[dict]):
             raise UpdateFailed(f"Error communicating with Tuya Cloud API: {err}") from err
 
         return {dp["code"]: dp["value"] for dp in raw}
+
+    @callback
+    def async_push_update(self, new_data: dict) -> None:
+        """Apply a partial status update received via Pulsar without polling."""
+        merged = {**(self.data or {}), **new_data}
+        self.data = merged
+        self.async_update_listeners()

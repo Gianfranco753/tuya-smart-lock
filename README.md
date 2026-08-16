@@ -5,9 +5,9 @@
 [![License](https://img.shields.io/github/license/nicolasglg/tuya-smart-lock?style=flat-square)](LICENSE)
 [![Buy Me A Beer](https://img.shields.io/badge/Buy%20Me%20A%20Beer-support-yellow?style=flat-square&logo=buy-me-a-coffee)](https://buymeacoffee.com/nicolasglg)
 
-**Control your Tuya smart lock directly from Home Assistant.**
+**Control your Tuya smart lock directly from Home Assistant — with real-time door events.**
 
-The official Tuya integration doesn't support lock/unlock — it only exposes a binary sensor (open/closed state). This integration fills the gap by using the Tuya Smart Lock Cloud API to add a proper `lock` entity with lock/unlock control.
+The official Tuya integration doesn't support lock/unlock — it only exposes a binary sensor (open/closed state). This integration fills the gap by using the Tuya Smart Lock Cloud API to add a proper `lock` entity with lock/unlock control, and subscribes to Tuya's Pulsar message gateway so door state, tamper alerts, and doorbell events update in real time instead of waiting for the next poll.
 
 ## Why this integration?
 
@@ -120,9 +120,7 @@ data:
 | `sensor.<lock>_last_alarm` | `sensor` (diagnostic) | Last alarm code reported (e.g. `wrong_password`, `wrong_finger`) |
 | `event.<lock>_unlock_history` | `event` | Fires each time a new unlock is detected, with method (fingerprint/password/card/etc.), `unlock_name`, and `user_name` |
 
-⚠️ All of these are poll-based, not real-time push:
-- Tamper, doorbell, and last alarm refresh every 5 minutes (shared with the battery sensor).
-- Unlock history refreshes every 2 minutes — a brief doorbell press or an unlock could be missed or reported up to 2 minutes late if it happens between polls.
+Tamper, doorbell, last alarm, and battery update in real time via Tuya's Pulsar message gateway — the integration maintains a persistent WebSocket connection and pushes incoming device events straight to the entities without waiting for the next poll. The 5-minute status poll and 2-minute records poll are kept as a fallback in case the Pulsar connection is temporarily unreachable.
 
 Example automation using the unlock history event:
 
@@ -173,14 +171,27 @@ Before installing, you need to set up a few things on the Tuya IoT Platform. Thi
 
 Both services are free for personal use. They may require periodic renewal (every ~6 months) — you'll get an email when it's time.
 
-### 4. Enable remote unlock on your device
+### 4. Enable real-time message service
+
+This is what allows the integration to receive instant door events instead of waiting for the next poll.
+
+1. In your project, go to the **Message Service** tab (top navigation bar inside the project)
+2. Click **Add Message Type**
+3. Under **Device Business Data**, check **Device Status Notification** — this is the event type sent when a lock datapoint changes (door opened/closed, alarm triggered, doorbell pressed, etc.)
+4. Click **OK** to save
+
+If you don't see a **Message Service** tab, make sure **IoT Core** is subscribed (step 3 above) — that service is what unlocks the Pulsar gateway for your project.
+
+> ℹ️ The message service is activated per-project. If you have multiple projects on iot.tuya.com, you need to enable it on the one whose credentials you use in this integration.
+
+### 5. Enable remote unlock on your device
 
 1. Open the **Tuya** or **Smart Life** app on your phone
 2. Go to your lock device
 3. Open the device **Settings**
 4. Enable **Remote Unlock** (sometimes called "Remote Unlock Without Password")
 
-### 5. Note your credentials
+### 6. Note your credentials
 
 1. Go back to [iot.tuya.com](https://iot.tuya.com) > **Cloud** > your project > **Overview**
 2. Copy your **Access ID** and **Access Secret** — you'll need them during setup
@@ -240,8 +251,9 @@ If your lock device uses the Tuya ticket-based unlock flow, it should work. If i
 
 - **Cloud-only**: Tuya locks do not support local control. Commands go through the Tuya Cloud API. If your internet is down, you can still use the physical keypad/badge/fingerprint on the device itself.
 - **API trial renewal**: IoT Core and Smart Lock Open Service are free but require renewal approximately every 6 months on iot.tuya.com.
-- **Optimistic state**: State updates are optimistic with post-command verification (polls the cloud 5 seconds after a command). There is no real-time push from the device.
-- **Polling intervals**: Battery level and lock status are refreshed every 5 minutes. The temporary passwords list is refreshed every hour. These are separate polling cycles — a coordinator dedicated to device status (battery, lock state) and one dedicated to password management — so a burst of Tuya API activity from one doesn't affect the other's freshness or cost.
+- **Optimistic state**: Lock/unlock commands are optimistic — the entity flips state immediately on a successful API call rather than waiting for the device to confirm. Status then syncs via the next Pulsar message or poll.
+- **Pulsar connection**: The integration connects to Tuya's WebSocket Pulsar gateway at startup. If Tuya's message service is unreachable, entities fall back to polling (5 min for status, 2 min for records, 1 h for passwords) and reconnect automatically.
+- **Polling as fallback**: Battery level, lock status, and sensor states are refreshed every 5 minutes regardless of Pulsar. The temporary passwords list is refreshed every hour. Polling is a separate cycle per coordinator, so a slow API response on one doesn't delay the others.
 
 ## Troubleshooting
 
