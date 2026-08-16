@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from ..const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 from .anti_lock import TuyaLockAntiLock
 from .doorbell import TuyaLockDoorbell
-from .normal_open import TuyaLockNormalOpen
+from .remote_unlock_switch import TuyaLockRemoteUnlockEnabled
 from .tamper import TuyaLockTamper
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,5 +31,5 @@ async def async_setup_entry(
         TuyaLockTamper(status_coordinator, device_id, device_name),
         TuyaLockDoorbell(status_coordinator, device_id, device_name),
         TuyaLockAntiLock(status_coordinator, device_id, device_name),
-        TuyaLockNormalOpen(status_coordinator, device_id, device_name),
+        TuyaLockRemoteUnlockEnabled(status_coordinator, device_id, device_name),
     ])

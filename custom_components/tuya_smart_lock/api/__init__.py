@@ -8,6 +8,7 @@ no changes needed in lock.py, coordinator/*, etc.
 """
 
 from .client import TuyaApiClient, TuyaApiError
+from .commands import CommandsMixin
 from .discovery import DiscoveryMixin
 from .lock_control import LockControlMixin
 from .passwords import PasswordsMixin
@@ -16,6 +17,7 @@ from .status import StatusMixin
 
 
 class TuyaCloudApi(
+    CommandsMixin,
     DiscoveryMixin,
     LockControlMixin,
     PasswordsMixin,

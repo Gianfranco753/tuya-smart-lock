@@ -24,6 +24,7 @@ _INITIAL_RECONNECT_DELAY = 5
 _MAX_RECONNECT_DELAY = 300
 
 MessageHandler = Callable[[dict], Awaitable[None]]
+SimpleCallback = Callable[[], None]
 
 
 def _build_auth_header(access_id: str, access_secret: str) -> str:
@@ -71,12 +72,22 @@ class TuyaOpenPulsar:
     any error.
     """
 
-    def __init__(self, access_id: str, access_secret: str, region: str) -> None:
+    def __init__(
+        self,
+        access_id: str,
+        access_secret: str,
+        region: str,
+        on_max_backoff: SimpleCallback | None = None,
+        on_reconnect: SimpleCallback | None = None,
+    ) -> None:
         self._access_id = access_id
         self._access_secret = access_secret
         self._region = region
         self._handlers: list[MessageHandler] = []
         self._task: asyncio.Task | None = None
+        self._on_max_backoff = on_max_backoff
+        self._on_reconnect = on_reconnect
+        self._max_backoff_fired = False
 
     def add_message_handler(self, handler: MessageHandler) -> None:
         self._handlers.append(handler)
@@ -106,6 +117,10 @@ class TuyaOpenPulsar:
             try:
                 await self._run_session()
                 delay = _INITIAL_RECONNECT_DELAY
+                if self._max_backoff_fired:
+                    self._max_backoff_fired = False
+                    if self._on_reconnect:
+                        self._on_reconnect()
             except asyncio.CancelledError:
                 raise
             except Exception as err:
@@ -114,6 +129,10 @@ class TuyaOpenPulsar:
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY)
+                if delay >= _MAX_RECONNECT_DELAY and not self._max_backoff_fired:
+                    self._max_backoff_fired = True
+                    if self._on_max_backoff:
+                        self._on_max_backoff()
 
     async def _run_session(self) -> None:
         auth = _build_auth_header(self._access_id, self._access_secret)

@@ -39,3 +39,8 @@ TEMP_PASSWORD_DELETE_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwo
 FREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}/freeze-password"
 UNFREEZE_PASSWORD_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/temp-passwords/{password_id}/unfreeze-password"
 RECORDS_ENDPOINT = "/v1.0/devices/{device_id}/door-lock/records"
+DEVICE_COMMAND_ENDPOINT = "/v1.0/iot-03/devices/{device_id}/commands"
+
+# Dispatcher signal fired by the Pulsar handler each time alarm_lock appears
+# in a statusReport. Format with device_id before use.
+SIGNAL_LOCK_ALARM = "tuya_smart_lock_alarm_{}"

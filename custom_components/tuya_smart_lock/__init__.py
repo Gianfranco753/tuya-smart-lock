@@ -2,11 +2,21 @@
 
 import logging
 
+from homeassistant.components.persistent_notification import async_create as pn_create
+from homeassistant.components.persistent_notification import async_dismiss as pn_dismiss
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_API_REGION, CONF_DEVICE_ID, DOMAIN
+from .const import (
+    CONF_ACCESS_ID,
+    CONF_ACCESS_SECRET,
+    CONF_API_REGION,
+    CONF_DEVICE_ID,
+    DOMAIN,
+    SIGNAL_LOCK_ALARM,
+)
 from .coordinator import (
     TuyaLockRecordsCoordinator,
     TuyaLockStatusCoordinator,
@@ -17,7 +27,43 @@ from .pulsar import TuyaOpenPulsar
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.BINARY_SENSOR, Platform.EVENT]
+PLATFORMS = [
+    Platform.LOCK,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.EVENT,
+    Platform.SWITCH,
+]
+
+_PULSAR_DISCONNECT_NOTIFICATION_ID = "tuya_smart_lock_pulsar_disconnected_{}"
+
+# Unlock DPs trigger a records refresh so the unlock event entity fires with
+# full user detail within one API round-trip instead of up to 2 minutes.
+_UNLOCK_DP_CODES = {
+    "unlock_fingerprint",
+    "unlock_password",
+    "unlock_temporary",
+    "unlock_dynamic",
+    "unlock_card",
+    "unlock_face",
+    "unlock_remote",
+}
+
+# Password management DPs trigger a temp-passwords refresh so the passwords
+# list stays current instead of lagging up to an hour.
+_PASSWORD_MGMT_DP_CODES = {
+    "password_creat",
+    "password_delete",
+    "password_update",
+    "password_disable",
+    "password_enable",
+    "password_reset",
+    "unlock_method_create",
+    "unlock_method_delete",
+    "update_all_finger",
+    "update_all_password",
+    "update_all_card",
+}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -39,13 +85,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await temp_passwords_coordinator.async_config_entry_first_refresh()
     await records_coordinator.async_config_entry_first_refresh()
 
+    notification_id = _PULSAR_DISCONNECT_NOTIFICATION_ID.format(entry.entry_id)
+
     pulsar = TuyaOpenPulsar(
         access_id=entry.data[CONF_ACCESS_ID],
         access_secret=entry.data[CONF_ACCESS_SECRET],
         region=entry.data[CONF_API_REGION],
+        on_max_backoff=_make_disconnect_callback(hass, notification_id),
+        on_reconnect=_make_reconnect_callback(hass, notification_id),
     )
     pulsar.add_message_handler(
-        _make_pulsar_handler(hass, device_id, status_coordinator, records_coordinator)
+        _make_pulsar_handler(
+            hass, device_id, status_coordinator, records_coordinator, temp_passwords_coordinator
+        )
     )
     await pulsar.start()
 
@@ -75,25 +127,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-# DP codes that indicate someone actually used the lock — triggers a records
-# refresh so the unlock history event entity fires with full detail (user name
-# etc.) within one API round-trip instead of waiting up to 2 minutes.
-_UNLOCK_DP_CODES = {
-    "unlock_fingerprint",
-    "unlock_password",
-    "unlock_temporary",
-    "unlock_dynamic",
-    "unlock_card",
-    "unlock_face",
-    "unlock_remote",
-}
-
-
 def _make_pulsar_handler(
     hass: HomeAssistant,
     device_id: str,
     status_coordinator: TuyaLockStatusCoordinator,
     records_coordinator: TuyaLockRecordsCoordinator,
+    temp_passwords_coordinator: TuyaLockTempPasswordsCoordinator,
 ):
     """Return an async handler that routes Pulsar messages to the right coordinators."""
 
@@ -110,8 +149,20 @@ def _make_pulsar_handler(
         new_status = {dp["code"]: dp["value"] for dp in status_list}
         status_coordinator.async_push_update(new_status)
 
-        if _UNLOCK_DP_CODES & set(new_status):
+        dp_codes = set(new_status)
+
+        if dp_codes & _UNLOCK_DP_CODES:
             await records_coordinator.async_request_refresh()
+
+        if dp_codes & _PASSWORD_MGMT_DP_CODES:
+            await temp_passwords_coordinator.async_request_refresh()
+
+        if "alarm_lock" in new_status:
+            async_dispatcher_send(
+                hass,
+                SIGNAL_LOCK_ALARM.format(device_id),
+                new_status["alarm_lock"],
+            )
 
     return _on_message
 
@@ -125,3 +176,31 @@ def _extract_status_list(biz_data) -> list:
             if isinstance(item, dict) and "status" in item:
                 return item["status"]
     return []
+
+
+@callback
+def _make_disconnect_callback(hass: HomeAssistant, notification_id: str):
+    @callback
+    def _on_disconnect() -> None:
+        pn_create(
+            hass,
+            (
+                "The Tuya Smart Lock real-time connection (Pulsar) could not be "
+                "re-established after several attempts. Device events will fall back "
+                "to polling until the connection recovers. Check your network and "
+                "Tuya IoT Platform credentials."
+            ),
+            title="Tuya Smart Lock: real-time connection lost",
+            notification_id=notification_id,
+        )
+
+    return _on_disconnect
+
+
+@callback
+def _make_reconnect_callback(hass: HomeAssistant, notification_id: str):
+    @callback
+    def _on_reconnect() -> None:
+        pn_dismiss(hass, notification_id)
+
+    return _on_reconnect
