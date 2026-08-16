@@ -117,10 +117,14 @@ data:
 |--------|------|----------------|
 | `binary_sensor.<lock>_tamper` | `binary_sensor` (tamper) | On if the lock reports a hijack/tamper alert |
 | `binary_sensor.<lock>_doorbell` | `binary_sensor` | On if the doorbell was recently pressed |
+| `binary_sensor.<lock>_anti_lock` | `binary_sensor` (diagnostic) | On when anti-lock-from-outside is engaged — outside handle/keypad is blocked |
+| `binary_sensor.<lock>_normal_open` | `binary_sensor` | On when the lock is in "always open" mode (e.g. business hours on access-control doors) |
 | `sensor.<lock>_last_alarm` | `sensor` (diagnostic) | Last alarm code reported (e.g. `wrong_password`, `wrong_finger`) |
 | `event.<lock>_unlock_history` | `event` | Fires each time a new unlock is detected, with method (fingerprint/password/card/etc.), `unlock_name`, and `user_name` |
 
-Tamper, doorbell, last alarm, and battery update in real time via Tuya's Pulsar message gateway — the integration maintains a persistent WebSocket connection and pushes incoming device events straight to the entities without waiting for the next poll. The 5-minute status poll and 2-minute records poll are kept as a fallback in case the Pulsar connection is temporarily unreachable.
+All of these update in real time via Tuya's Pulsar message gateway — the integration maintains a persistent WebSocket connection and pushes incoming device events straight to the entities without waiting for the next poll. The 5-minute status poll is kept as a fallback in case the Pulsar connection is temporarily unreachable.
+
+The unlock history event fires within one API round-trip (~1 s) of a physical unlock: the Pulsar message triggers an immediate records poll, which returns the full record with user name and unlock method.
 
 Example automation using the unlock history event:
 

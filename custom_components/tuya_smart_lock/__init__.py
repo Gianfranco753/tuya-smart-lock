@@ -75,6 +75,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+# DP codes that indicate someone actually used the lock — triggers a records
+# refresh so the unlock history event entity fires with full detail (user name
+# etc.) within one API round-trip instead of waiting up to 2 minutes.
+_UNLOCK_DP_CODES = {
+    "unlock_fingerprint",
+    "unlock_password",
+    "unlock_temporary",
+    "unlock_dynamic",
+    "unlock_card",
+    "unlock_face",
+    "unlock_remote",
+}
+
+
 def _make_pulsar_handler(
     hass: HomeAssistant,
     device_id: str,
@@ -96,8 +110,8 @@ def _make_pulsar_handler(
         new_status = {dp["code"]: dp["value"] for dp in status_list}
         status_coordinator.async_push_update(new_status)
 
-        # A status change likely means a new unlock record is available too.
-        await records_coordinator.async_request_refresh()
+        if _UNLOCK_DP_CODES & set(new_status):
+            await records_coordinator.async_request_refresh()
 
     return _on_message
 
