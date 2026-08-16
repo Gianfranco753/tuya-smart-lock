@@ -23,6 +23,7 @@ PULSAR_WS_ENDPOINTS = {
 
 _INITIAL_RECONNECT_DELAY = 5
 _MAX_RECONNECT_DELAY = 300
+_MAX_HANDLER_RETRIES = 3
 
 MessageHandler = Callable[[dict], Awaitable[None]]
 SimpleCallback = Callable[[], None]
@@ -91,6 +92,7 @@ class TuyaOpenPulsar:
         self._on_max_backoff = on_max_backoff
         self._on_reconnect = on_reconnect
         self._max_backoff_fired = False
+        self._handler_failures: dict[str, int] = {}
 
     def add_message_handler(self, handler: MessageHandler) -> None:
         self._handlers.append(handler)
@@ -119,11 +121,15 @@ class TuyaOpenPulsar:
         while True:
             try:
                 await self._run_session()
+                # Session ended with a clean CLOSE/ERROR frame — still a disconnect.
+                # Reset delay and dismiss any outstanding notification, then sleep
+                # before reconnecting to avoid a tight loop on rapid server closes.
                 delay = _INITIAL_RECONNECT_DELAY
                 if self._max_backoff_fired:
                     self._max_backoff_fired = False
                     if self._on_reconnect:
                         self._on_reconnect()
+                await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 raise
             except Exception as err:
@@ -141,27 +147,36 @@ class TuyaOpenPulsar:
         auth = _build_auth_header(self._access_id, self._access_secret)
         session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
 
-        async with session.ws_connect(
-            self._ws_url(),
-            headers={"Authorization": auth},
-            heartbeat=30,
-        ) as ws:
-            _LOGGER.info("Tuya Pulsar WebSocket connected")
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    await self._process_message(ws, msg.data)
-                elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                    break
+        try:
+            async with session.ws_connect(
+                self._ws_url(),
+                headers={"Authorization": auth},
+                heartbeat=30,
+            ) as ws:
+                _LOGGER.info("Tuya Pulsar WebSocket connected")
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self._process_message(ws, msg.data)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                        break
+        finally:
+            if not self._hass:
+                await session.close()
 
     async def _process_message(
         self, ws: aiohttp.ClientWebSocketResponse, raw: str
     ) -> None:
+        # Phase 1: parse and decrypt. On failure, ack to stop infinite redelivery
+        # of a permanently corrupt message, then bail out early.
+        message_id = None
         try:
             envelope = json.loads(raw)
             message_id = envelope.get("messageId")
 
             payload_b64 = envelope.get("payload")
             if not payload_b64:
+                if message_id:
+                    await ws.send_str(json.dumps({"messageId": message_id}))
                 return
 
             outer = json.loads(base64.b64decode(payload_b64))
@@ -175,11 +190,41 @@ class TuyaOpenPulsar:
                 pv = str(biz_data.get("pv", "1.0"))
                 biz_data = json.loads(_decrypt_payload(biz_data["data"], pv, self._access_secret))
 
-            for handler in self._handlers:
-                await handler({**outer, "bizData": biz_data})
-
-            if message_id:
-                await ws.send_str(json.dumps({"messageId": message_id}))
-
         except Exception:
             _LOGGER.exception("Failed to process Pulsar message: %.200s", raw)
+            if message_id:
+                try:
+                    await ws.send_str(json.dumps({"messageId": message_id}))
+                except Exception:
+                    pass  # ws may be closing; losing this ack is acceptable
+            return
+
+        # Phase 2: dispatch to handlers. Withhold the ack on failure so Tuya
+        # redelivers (at-least-once semantics), but give up after
+        # _MAX_HANDLER_RETRIES to avoid an infinite loop when the failure is
+        # permanent (e.g. a malformed-but-parseable message from the broker).
+        try:
+            for handler in self._handlers:
+                await handler({**outer, "bizData": biz_data})
+        except Exception:
+            _LOGGER.exception("Pulsar message handler raised an exception")
+            if message_id:
+                failures = self._handler_failures.get(message_id, 0) + 1
+                if failures >= _MAX_HANDLER_RETRIES:
+                    _LOGGER.warning(
+                        "Giving up on message %s after %d failures; acking to stop redelivery",
+                        message_id,
+                        failures,
+                    )
+                    self._handler_failures.pop(message_id, None)
+                    try:
+                        await ws.send_str(json.dumps({"messageId": message_id}))
+                    except Exception:
+                        pass
+                else:
+                    self._handler_failures[message_id] = failures
+            return
+
+        self._handler_failures.pop(message_id, None)
+        if message_id:
+            await ws.send_str(json.dumps({"messageId": message_id}))

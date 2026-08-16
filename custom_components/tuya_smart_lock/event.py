@@ -103,7 +103,7 @@ class TuyaLockUnlockEvent(CoordinatorEntity, EventEntity):
             self.async_write_ha_state()
             return
 
-        if record_id and record_id != self._last_seen_record_id:
+        if record_id is not None and record_id != self._last_seen_record_id:
             self._last_seen_record_id = record_id
 
             dps = record.get("dps") or [{}]

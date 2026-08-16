@@ -30,8 +30,12 @@ class PasswordsMixin:
             _LOGGER.error("Failed to get ticket: %s", ticket_resp.get("msg"))
             return False
 
-        ticket_id = ticket_resp["result"]["ticket_id"]
-        ticket_key = ticket_resp["result"]["ticket_key"]
+        result = ticket_resp.get("result") or {}
+        ticket_id = result.get("ticket_id")
+        ticket_key = result.get("ticket_key")
+        if not ticket_id or not ticket_key:
+            _LOGGER.error("Ticket response missing expected fields: %s", ticket_resp)
+            return False
 
         real_key = decrypt_ticket_key(ticket_key, self._access_secret)
         encrypted_pwd = encrypt_password(password, real_key)

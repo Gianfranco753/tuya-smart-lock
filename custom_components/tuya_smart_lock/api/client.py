@@ -80,6 +80,9 @@ class TuyaApiClient:
             except TimeoutError as err:
                 _LOGGER.error("Timeout getting Tuya token")
                 raise TuyaApiError("Timeout connecting to Tuya Cloud API") from err
+            except json.JSONDecodeError as err:
+                _LOGGER.error("Invalid JSON in Tuya token response")
+                raise TuyaApiError("Tuya Cloud API returned invalid JSON for token") from err
             finally:
                 if not self._hass:
                     await session.close()
@@ -154,6 +157,9 @@ class TuyaApiClient:
         except TimeoutError as err:
             _LOGGER.error("Timeout calling Tuya API (%s)", full_path)
             raise TuyaApiError(f"Timeout connecting to Tuya Cloud API ({full_path})") from err
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Invalid JSON response from Tuya API (%s)", full_path)
+            raise TuyaApiError(f"Tuya API returned invalid JSON ({full_path})") from err
         finally:
             if not self._hass:
                 await session.close()

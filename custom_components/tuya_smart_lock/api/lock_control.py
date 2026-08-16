@@ -34,7 +34,11 @@ class LockControlMixin:
             _LOGGER.error("Failed to get ticket: %s", ticket_resp.get("msg"))
             return False
 
-        ticket_id = ticket_resp["result"]["ticket_id"]
+        result = ticket_resp.get("result") or {}
+        ticket_id = result.get("ticket_id")
+        if not ticket_id:
+            _LOGGER.error("Ticket response missing ticket_id: %s", ticket_resp)
+            return False
 
         path = DOOR_OPERATE_ENDPOINT.format(device_id=device_id)
         unlock_resp = await self._request("POST", path, {"ticket_id": ticket_id, "open": True})
@@ -55,7 +59,11 @@ class LockControlMixin:
             _LOGGER.error("Failed to get ticket: %s", ticket_resp.get("msg"))
             return False
 
-        ticket_id = ticket_resp["result"]["ticket_id"]
+        result = ticket_resp.get("result") or {}
+        ticket_id = result.get("ticket_id")
+        if not ticket_id:
+            _LOGGER.error("Ticket response missing ticket_id: %s", ticket_resp)
+            return False
 
         path = DOOR_OPERATE_ENDPOINT.format(device_id=device_id)
         lock_resp = await self._request("POST", path, {"ticket_id": ticket_id, "open": False})

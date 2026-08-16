@@ -47,5 +47,6 @@ class TuyaLockStatusCoordinator(DataUpdateCoordinator[dict]):
     def async_push_update(self, new_data: dict) -> None:
         """Apply a partial status update received via Pulsar without polling."""
         merged = {**(self.data or {}), **new_data}
-        self.data = merged
-        self.async_update_listeners()
+        # async_set_updated_data also resets last_update_success=True, so entities
+        # that went unavailable after a failed poll recover on the next push event.
+        self.async_set_updated_data(merged)
