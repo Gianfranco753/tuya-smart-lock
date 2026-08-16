@@ -9,6 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from ..const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
 from .anti_lock import TuyaLockAntiLock
 from .doorbell import TuyaLockDoorbell
+from .pulsar_connection import TuyaPulsarConnection
 from .remote_unlock_switch import TuyaLockRemoteUnlockEnabled
 from .tamper import TuyaLockTamper
 
@@ -24,6 +25,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     entry_data = data["entry_data"]
     status_coordinator = data["status_coordinator"]
+    pulsar = data["pulsar"]
     device_id = entry_data[CONF_DEVICE_ID]
     device_name = entry_data[CONF_DEVICE_NAME]
 
@@ -32,4 +34,5 @@ async def async_setup_entry(
         TuyaLockDoorbell(status_coordinator, device_id, device_name),
         TuyaLockAntiLock(status_coordinator, device_id, device_name),
         TuyaLockRemoteUnlockEnabled(status_coordinator, device_id, device_name),
+        TuyaPulsarConnection(pulsar, device_id, device_name),
     ])

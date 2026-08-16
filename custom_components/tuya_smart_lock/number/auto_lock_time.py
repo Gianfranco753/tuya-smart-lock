@@ -48,6 +48,13 @@ class TuyaLockAutoLockTime(CoordinatorEntity, NumberEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "auto_lock_time" in data or self._optimistic_value is not None
+
+    @property
     def native_value(self) -> float | None:
         if self._optimistic_value is not None:
             return self._optimistic_value

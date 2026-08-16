@@ -34,6 +34,13 @@ class TuyaLockBattery(CoordinatorEntity, SensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "battery_percentage" in data or "residual_electricity" in data
+
+    @property
     def native_value(self):
         """Return the battery percentage from the shared status data."""
         data = self.coordinator.data or {}

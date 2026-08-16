@@ -93,6 +93,31 @@ class TuyaOpenPulsar:
         self._on_reconnect = on_reconnect
         self._max_backoff_fired = False
         self._handler_failures: dict[str, int] = {}
+        self._connected = False
+        self._state_listeners: list[SimpleCallback] = []
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
+
+    def add_state_listener(self, listener: SimpleCallback) -> SimpleCallback:
+        """Register a callback fired on every connection state change.
+
+        Returns a remove callable suitable for passing to async_on_remove.
+        """
+        self._state_listeners.append(listener)
+
+        def _remove() -> None:
+            try:
+                self._state_listeners.remove(listener)
+            except ValueError:
+                pass
+
+        return _remove
+
+    def _notify_state_change(self) -> None:
+        for listener in self._state_listeners:
+            listener()
 
     def add_message_handler(self, handler: MessageHandler) -> None:
         self._handlers.append(handler)
@@ -154,11 +179,17 @@ class TuyaOpenPulsar:
                 heartbeat=30,
             ) as ws:
                 _LOGGER.info("Tuya Pulsar WebSocket connected")
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        await self._process_message(ws, msg.data)
-                    elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                        break
+                self._connected = True
+                self._notify_state_change()
+                try:
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await self._process_message(ws, msg.data)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
+                            break
+                finally:
+                    self._connected = False
+                    self._notify_state_change()
         finally:
             if not self._hass:
                 await session.close()

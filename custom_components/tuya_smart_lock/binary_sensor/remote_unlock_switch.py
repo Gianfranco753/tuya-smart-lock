@@ -37,6 +37,13 @@ class TuyaLockRemoteUnlockEnabled(CoordinatorEntity, BinarySensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "remote_unlock_switch" in data
+
+    @property
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         return bool(data.get("remote_unlock_switch", False))

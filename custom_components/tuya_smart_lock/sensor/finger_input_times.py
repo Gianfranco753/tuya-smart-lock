@@ -33,6 +33,13 @@ class TuyaLockFingerInputTimes(CoordinatorEntity, SensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "finger_input_times" in data
+
+    @property
     def native_value(self):
         data = self.coordinator.data or {}
         return data.get("finger_input_times")

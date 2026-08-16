@@ -37,6 +37,13 @@ class TuyaLockAntiLock(CoordinatorEntity, BinarySensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "anti_lock_outside" in data
+
+    @property
     def is_on(self) -> bool:
         data = self.coordinator.data or {}
         return bool(data.get("anti_lock_outside", False))

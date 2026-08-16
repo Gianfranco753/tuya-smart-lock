@@ -33,6 +33,13 @@ class TuyaLockTamper(CoordinatorEntity, BinarySensorEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "hijack" in data
+
+    @property
     def is_on(self) -> bool:
         """Return True if the lock reports a hijack/tamper alert."""
         data = self.coordinator.data or {}

@@ -41,6 +41,13 @@ class TuyaLockNormalOpenSwitch(CoordinatorEntity, SwitchEntity):
         }
 
     @property
+    def available(self) -> bool:
+        if not super().available:
+            return False
+        data = self.coordinator.data or {}
+        return "normal_open_switch" in data
+
+    @property
     def is_on(self) -> bool:
         if self._optimistic_on is not None:
             return self._optimistic_on
