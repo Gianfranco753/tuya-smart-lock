@@ -11,11 +11,11 @@ from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, DOMAIN
-
-from .api import TuyaCloudApi
+from .api import TuyaCloudApi, TuyaApiError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,11 +35,9 @@ async def async_setup_entry(
     device_id = entry_data[CONF_DEVICE_ID]
     device_name = entry_data[CONF_DEVICE_NAME]
 
-    # auto_lock_time now comes from the shared status coordinator instead
-    # of its own dedicated API call.
     auto_lock_time = status_coordinator.data.get("auto_lock_time", DEFAULT_AUTO_LOCK_DELAY)
 
-    async_add_entities([TuyaSmartLock(api, device_id, device_name, auto_lock_time)])
+    async_add_entities([TuyaSmartLock(api, status_coordinator, device_id, device_name, auto_lock_time)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -72,14 +70,30 @@ async def async_setup_entry(
         {vol.Required("password_id"): str},
         "async_unfreeze_temp_password",
     )
-class TuyaSmartLock(LockEntity):
-    """Lock entity that controls a Tuya smart lock via Cloud API."""
+
+
+def _is_open(value) -> bool:
+    """Interpret a Tuya open_close datapoint value as True=open/unlocked."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "open"
+    return bool(value)
+
+
+class TuyaSmartLock(CoordinatorEntity, LockEntity):
+    """Lock entity that controls a Tuya smart lock via Cloud API.
+
+    Subscribes to status_coordinator so that physical unlocks (fingerprint,
+    card, app) are reflected in HA in real time via the open_close datapoint,
+    pushed by the Pulsar client or picked up on the next poll.
+    """
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_should_poll = False
 
-    def __init__(self, api, device_id: str, device_name: str, auto_lock_time: int) -> None:
+    def __init__(self, api, coordinator, device_id: str, device_name: str, auto_lock_time: int) -> None:
+        super().__init__(coordinator)
         self._api = api
         self._device_id = device_id
         self._auto_lock_time = auto_lock_time
@@ -97,6 +111,20 @@ class TuyaSmartLock(LockEntity):
             "name": self._device_name,
             "manufacturer": "Tuya",
         }
+
+    def _handle_coordinator_update(self) -> None:
+        """Sync lock state from the device's open_close datapoint.
+
+        Skipped during an in-progress lock/unlock command so that the
+        optimistic transition state isn't overwritten mid-command.
+        """
+        command_in_progress = self._attr_is_locking or self._attr_is_unlocking
+        if not command_in_progress:
+            data = self.coordinator.data or {}
+            open_close = data.get("open_close")
+            if open_close is not None:
+                self._attr_is_locked = not _is_open(open_close)
+        self.async_write_ha_state()
 
     async def async_lock(self, **kwargs) -> None:
         """Lock the door."""
@@ -133,12 +161,12 @@ class TuyaSmartLock(LockEntity):
         self.async_write_ha_state()
 
         if success:
-            # Re-lock after auto_lock_time + 1s buffer
+            # Fallback re-lock in case Pulsar doesn't deliver the close event.
             delay = self._auto_lock_time + 1
             self.hass.loop.call_later(delay, self._set_locked)
 
     def _set_locked(self) -> None:
-        """Reset state to locked after auto-lock delay."""
+        """Fallback: reset state to locked after the auto-lock delay."""
         self._attr_is_locked = True
         self.async_write_ha_state()
 
@@ -150,17 +178,17 @@ class TuyaSmartLock(LockEntity):
         now = dt_util.utcnow()
         effective_time = int(now.timestamp())
         invalid_time = int((now + timedelta(hours=duration_hours)).timestamp())
-        
+
         try:
             success = await self._api.async_create_temp_password(
                 self._device_id, code, name, effective_time, invalid_time
             )
         except (TuyaApiError, ConnectionError) as err:
             raise HomeAssistantError(f"Could not create temporary password '{name}': {err}") from err
-        
+
         if not success:
             raise HomeAssistantError(f"Failed to create temporary password '{name}'")
-    
+
     async def async_get_dynamic_password(self) -> ServiceResponse:
         """Get a dynamic password. Valid ~5 minutes, works even if the lock is offline."""
         try:
