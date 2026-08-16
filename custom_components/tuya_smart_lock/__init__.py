@@ -115,7 +115,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, device_id, status_coordinator, records_coordinator, temp_passwords_coordinator
         )
     )
-    await pulsar.start()
 
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
@@ -129,6 +128,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Start Pulsar after all entities are registered so dispatcher listeners
+    # are in place before any incoming alarm messages can arrive.
+    await pulsar.start()
 
     # Reload the entry when the user saves new options so coordinators
     # restart with the updated polling intervals.

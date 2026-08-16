@@ -184,6 +184,7 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel any pending relock timer when the entity is removed."""
+        await super().async_will_remove_from_hass()
         if self._relock_handle is not None:
             self._relock_handle.cancel()
             self._relock_handle = None
@@ -197,7 +198,7 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
     async def async_create_temp_password(self, code: str, name: str, duration_hours: int) -> None:
         """Create a temporary password on the lock."""
         if not code.isdigit():
-            raise HomeAssistantError("El código debe ser numérico")
+            raise HomeAssistantError("Password code must be numeric")
 
         now = dt_util.utcnow()
         effective_time = int(now.timestamp())
