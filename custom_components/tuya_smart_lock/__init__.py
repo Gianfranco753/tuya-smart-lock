@@ -103,9 +103,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     notification_id = _PULSAR_DISCONNECT_NOTIFICATION_ID.format(entry.entry_id)
 
     pulsar = TuyaOpenPulsar(
-        access_id=entry.data[CONF_ACCESS_ID],
         access_secret=entry.data[CONF_ACCESS_SECRET],
-        region=entry.data[CONF_API_REGION],
+        config_fetcher=api.async_get_mq_config,
         hass=hass,
         on_max_backoff=_make_disconnect_callback(hass, notification_id),
         on_reconnect=_make_reconnect_callback(hass, notification_id),

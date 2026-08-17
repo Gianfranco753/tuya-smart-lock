@@ -14,27 +14,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
-PULSAR_WS_ENDPOINTS = {
-    "eu": "wss://mqe.tuyaeu.com/ws/v2/consumer/persistent",
-    "us": "wss://mqe.tuyaus.com/ws/v2/consumer/persistent",
-    "cn": "wss://mqe.tuyacn.com/ws/v2/consumer/persistent",
-    "in": "wss://mqe.tuyain.com/ws/v2/consumer/persistent",
-}
-
 _INITIAL_RECONNECT_DELAY = 5
 _MAX_RECONNECT_DELAY = 300
 _MAX_HANDLER_RETRIES = 3
 
 MessageHandler = Callable[[dict], Awaitable[None]]
 SimpleCallback = Callable[[], None]
-
-
-def _build_auth_header(access_id: str, access_secret: str) -> str:
-    """Derive the Basic auth header Tuya's Pulsar WebSocket gateway expects."""
-    md5_secret = hashlib.md5(access_secret.encode()).hexdigest()
-    password = hashlib.md5((access_id + md5_secret).encode()).hexdigest()[8:24]
-    token = base64.b64encode(f"{access_id}:{password}".encode()).decode()
-    return f"Basic {token}"
+MqConfigFetcher = Callable[[], Awaitable[dict]]
 
 
 def _decrypt_payload(data: str, pv: str, access_secret: str) -> str:
@@ -70,22 +56,25 @@ class TuyaOpenPulsar:
         "bizData": {"status": [{"code": "door_contact_status", "value": "open"}]},
       }
 
+    Connection credentials are fetched from the Tuya REST API before each
+    connection attempt (via config_fetcher). Tuya computes the password
+    server-side and rotates it periodically, so fetching it fresh on every
+    reconnect handles expiry automatically without any local clock logic.
+
     The connection loop reconnects automatically with exponential backoff on
     any error.
     """
 
     def __init__(
         self,
-        access_id: str,
         access_secret: str,
-        region: str,
+        config_fetcher: MqConfigFetcher,
         hass=None,
         on_max_backoff: SimpleCallback | None = None,
         on_reconnect: SimpleCallback | None = None,
     ) -> None:
-        self._access_id = access_id
         self._access_secret = access_secret
-        self._region = region
+        self._config_fetcher = config_fetcher
         self._hass = hass
         self._handlers: list[MessageHandler] = []
         self._task: asyncio.Task | None = None
@@ -134,13 +123,6 @@ class TuyaOpenPulsar:
                 pass
             self._task = None
 
-    def _ws_url(self) -> str:
-        base = PULSAR_WS_ENDPOINTS[self._region]
-        return (
-            f"{base}/{self._access_id}/out/event/{self._access_id}-sub"
-            "?ackTimeoutMillis=3000&subscriptionType=Failover"
-        )
-
     async def _connect_with_backoff(self) -> None:
         delay = _INITIAL_RECONNECT_DELAY
         while True:
@@ -157,10 +139,28 @@ class TuyaOpenPulsar:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 raise
+            except aiohttp.WSServerHandshakeError as err:
+                # The server completed the TCP handshake but rejected the
+                # WebSocket upgrade — the HTTP status tells us why.
+                _LOGGER.warning(
+                    "Pulsar WebSocket upgrade rejected (HTTP %s), reconnecting in %ds",
+                    err.status,
+                    delay,
+                )
+                _LOGGER.debug("Pulsar handshake response: %s", err)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _MAX_RECONNECT_DELAY)
+                if delay >= _MAX_RECONNECT_DELAY and not self._max_backoff_fired:
+                    self._max_backoff_fired = True
+                    if self._on_max_backoff:
+                        self._on_max_backoff()
             except Exception as err:
                 _LOGGER.warning(
-                    "Pulsar WebSocket disconnected (%s), reconnecting in %ds", err, delay
+                    "Pulsar WebSocket disconnected (%s), reconnecting in %ds",
+                    type(err).__name__,
+                    delay,
                 )
+                _LOGGER.debug("Pulsar connection error detail:", exc_info=True)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY)
                 if delay >= _MAX_RECONNECT_DELAY and not self._max_backoff_fired:
@@ -169,14 +169,28 @@ class TuyaOpenPulsar:
                         self._on_max_backoff()
 
     async def _run_session(self) -> None:
-        auth = _build_auth_header(self._access_id, self._access_secret)
+        # Fetch fresh credentials before every connection attempt. Tuya rotates
+        # the password server-side (expire_time ~12h), so re-fetching on each
+        # reconnect handles expiry automatically.
+        config = await self._config_fetcher()
+        url = config.get("url", "")
+        username = config.get("username", "")
+        password = config.get("password", "")
+
+        if not url or not username or not password:
+            raise RuntimeError(f"Incomplete MQ config from Tuya API: {list(config.keys())}")
+
+        auth = base64.b64encode(f"{username}:{password}".encode()).decode()
+
         session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
 
+        _LOGGER.debug("Connecting to Pulsar")
         try:
             async with session.ws_connect(
-                self._ws_url(),
-                headers={"Authorization": auth},
+                url,
+                headers={"Authorization": f"Basic {auth}"},
                 heartbeat=30,
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as ws:
                 _LOGGER.info("Tuya Pulsar WebSocket connected")
                 self._connected = True

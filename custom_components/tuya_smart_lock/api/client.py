@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import time
+import uuid
 
 import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -36,6 +37,10 @@ class TuyaApiClient:
         self._token: str | None = None
         self._token_expiry: float = 0
         self._uid: str | None = None
+        # Stable identifier for this account's Pulsar subscription.
+        # Derived from access_id so it's the same across HA restarts — Tuya
+        # uses it to resume the same consumer and deliver buffered messages.
+        self._link_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, access_id))
         # Prevents two concurrent callers from both refreshing an expired token.
         self._token_lock = asyncio.Lock()
 
@@ -116,6 +121,32 @@ class TuyaApiClient:
             "sign_method": "HMAC-SHA256",
             "Content-Type": "application/json",
         }
+
+    async def async_get_mq_config(self) -> dict:
+        """Fetch the Pulsar message-queue connection config from Tuya's API.
+
+        Returns the `result` dict which contains: url, username, password,
+        client_id, expire_time, source_topic, sink_topic.
+        The password is computed server-side and must be used as-is — do not
+        try to derive it locally.
+        """
+        # _ensure_token must run before we read self._uid, which is populated
+        # as a side-effect of the token exchange.
+        await self._ensure_token()
+        resp = await self._request(
+            "POST",
+            "/v1.0/iot-03/open-hub/access-config",
+            body={
+                "uid": self._uid,
+                "link_id": self._link_id,
+                "link_type": "mqtt",
+                "topics": "device.status",
+                "msg_encrypted_version": "2.0",
+            },
+        )
+        if not resp.get("success"):
+            raise TuyaApiError(f"Failed to get MQ config: {resp.get('msg')}")
+        return resp.get("result", {})
 
     async def _request(
         self, method: str, path: str, body: dict | None = None, params: dict | None = None,
