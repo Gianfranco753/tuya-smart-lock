@@ -1,22 +1,22 @@
-"""Async WebSocket client for Tuya's Pulsar real-time message gateway."""
+"""MQTT client for Tuya's real-time device message service."""
 
 import asyncio
 import base64
 import hashlib
 import json
 import logging
+import ssl
+import urllib.parse
 from collections.abc import Awaitable, Callable
 
-import aiohttp
+import aiomqtt
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
 _INITIAL_RECONNECT_DELAY = 5
 _MAX_RECONNECT_DELAY = 300
-_MAX_HANDLER_RETRIES = 3
 
 MessageHandler = Callable[[dict], Awaitable[None]]
 SimpleCallback = Callable[[], None]
@@ -24,12 +24,11 @@ MqConfigFetcher = Callable[[], Awaitable[dict]]
 
 
 def _decrypt_payload(data: str, pv: str, access_secret: str) -> str:
-    """Decrypt a Tuya Pulsar message data field.
+    """Decrypt a Tuya MQTT message data field.
 
     pv="2.0" uses AES-GCM with the first 16 bytes of access_secret as key.
     pv="1.0" (and unversioned) uses AES-ECB with a key derived from
-    md5(access_secret)[8:24] — a separate derivation from the ticket-key
-    scheme in crypto.py.
+    md5(access_secret)[8:24].
     """
     raw = base64.b64decode(data)
 
@@ -45,9 +44,12 @@ def _decrypt_payload(data: str, pv: str, access_secret: str) -> str:
 
 
 class TuyaOpenPulsar:
-    """Async WebSocket client for Tuya's Pulsar message gateway.
+    """MQTT client for Tuya's real-time device message service.
 
-    Uses aiohttp (a HA core dependency) so no extra pip packages are needed.
+    Fetches connection credentials from the Tuya REST API before each
+    connection attempt — Tuya rotates the password server-side, so
+    re-fetching on every reconnect handles expiry automatically.
+
     Registered handlers receive fully-decrypted device message dicts:
 
       {
@@ -55,25 +57,21 @@ class TuyaOpenPulsar:
         "bizCode": "statusReport",
         "bizData": {"status": [{"code": "door_contact_status", "value": "open"}]},
       }
-
-    Connection credentials are fetched from the Tuya REST API before each
-    connection attempt (via config_fetcher). Tuya computes the password
-    server-side and rotates it periodically, so fetching it fresh on every
-    reconnect handles expiry automatically without any local clock logic.
-
-    The connection loop reconnects automatically with exponential backoff on
-    any error.
     """
 
     def __init__(
         self,
+        access_id: str,
         access_secret: str,
+        region: str,
         config_fetcher: MqConfigFetcher,
         hass=None,
         on_max_backoff: SimpleCallback | None = None,
         on_reconnect: SimpleCallback | None = None,
     ) -> None:
+        self._access_id = access_id
         self._access_secret = access_secret
+        self._region = region
         self._config_fetcher = config_fetcher
         self._hass = hass
         self._handlers: list[MessageHandler] = []
@@ -81,7 +79,6 @@ class TuyaOpenPulsar:
         self._on_max_backoff = on_max_backoff
         self._on_reconnect = on_reconnect
         self._max_backoff_fired = False
-        self._handler_failures: dict[str, int] = {}
         self._connected = False
         self._state_listeners: list[SimpleCallback] = []
 
@@ -128,9 +125,6 @@ class TuyaOpenPulsar:
         while True:
             try:
                 await self._run_session()
-                # Session ended with a clean CLOSE/ERROR frame — still a disconnect.
-                # Reset delay and dismiss any outstanding notification, then sleep
-                # before reconnecting to avoid a tight loop on rapid server closes.
                 delay = _INITIAL_RECONNECT_DELAY
                 if self._max_backoff_fired:
                     self._max_backoff_fired = False
@@ -139,28 +133,13 @@ class TuyaOpenPulsar:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
                 raise
-            except aiohttp.WSServerHandshakeError as err:
-                # The server completed the TCP handshake but rejected the
-                # WebSocket upgrade — the HTTP status tells us why.
-                _LOGGER.warning(
-                    "Pulsar WebSocket upgrade rejected (HTTP %s), reconnecting in %ds",
-                    err.status,
-                    delay,
-                )
-                _LOGGER.debug("Pulsar handshake response: %s", err)
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, _MAX_RECONNECT_DELAY)
-                if delay >= _MAX_RECONNECT_DELAY and not self._max_backoff_fired:
-                    self._max_backoff_fired = True
-                    if self._on_max_backoff:
-                        self._on_max_backoff()
             except Exception as err:
                 _LOGGER.warning(
-                    "Pulsar WebSocket disconnected (%s), reconnecting in %ds",
+                    "Tuya MQTT disconnected (%s), reconnecting in %ds",
                     type(err).__name__,
                     delay,
                 )
-                _LOGGER.debug("Pulsar connection error detail:", exc_info=True)
+                _LOGGER.debug("MQTT connection error detail:", exc_info=True)
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY)
                 if delay >= _MAX_RECONNECT_DELAY and not self._max_backoff_fired:
@@ -169,107 +148,82 @@ class TuyaOpenPulsar:
                         self._on_max_backoff()
 
     async def _run_session(self) -> None:
-        # Fetch fresh credentials before every connection attempt. Tuya rotates
-        # the password server-side (expire_time ~12h), so re-fetching on each
-        # reconnect handles expiry automatically.
         config = await self._config_fetcher()
         url = config.get("url", "")
         username = config.get("username", "")
         password = config.get("password", "")
+        client_id = config.get("client_id", "")
+        source_topic = config.get("source_topic", {})
 
         if not url or not username or not password:
             raise RuntimeError(f"Incomplete MQ config from Tuya API: {list(config.keys())}")
 
-        auth = base64.b64encode(f"{username}:{password}".encode()).decode()
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port or 8883
+        if parsed.scheme in ("mqtts", "ssl"):
+            if self._hass:
+                tls_context = await self._hass.async_add_executor_job(ssl.create_default_context)
+            else:
+                loop = asyncio.get_event_loop()
+                tls_context = await loop.run_in_executor(None, ssl.create_default_context)
+        else:
+            tls_context = None
 
-        session = async_get_clientsession(self._hass) if self._hass else aiohttp.ClientSession()
+        topics = list(source_topic.values()) if isinstance(source_topic, dict) else [source_topic]
+        if not topics:
+            topics = [f"{self._access_id}/out/event"]
 
-        _LOGGER.debug("Connecting to Pulsar")
-        try:
-            async with session.ws_connect(
-                url,
-                headers={"Authorization": f"Basic {auth}"},
-                heartbeat=30,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as ws:
-                _LOGGER.info("Tuya Pulsar WebSocket connected")
-                self._connected = True
+        _LOGGER.debug("Connecting to Tuya MQTT at %s:%s", hostname, port)
+        async with aiomqtt.Client(
+            hostname=hostname,
+            port=port,
+            username=username,
+            password=password,
+            identifier=client_id,
+            tls_context=tls_context,
+            timeout=30,
+        ) as client:
+            for topic in topics:
+                await client.subscribe(topic)
+                _LOGGER.debug("Subscribed to MQTT topic: %s", topic)
+
+            _LOGGER.info("Tuya MQTT connected")
+            self._connected = True
+            self._notify_state_change()
+            try:
+                async for message in client.messages:
+                    await self._process_message(bytes(message.payload))
+            finally:
+                self._connected = False
                 self._notify_state_change()
-                try:
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            await self._process_message(ws, msg.data)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR):
-                            break
-                finally:
-                    self._connected = False
-                    self._notify_state_change()
-        finally:
-            if not self._hass:
-                await session.close()
 
-    async def _process_message(
-        self, ws: aiohttp.ClientWebSocketResponse, raw: str
-    ) -> None:
-        # Phase 1: parse and decrypt. On failure, ack to stop infinite redelivery
-        # of a permanently corrupt message, then bail out early.
-        message_id = None
+    async def _process_message(self, payload: bytes) -> None:
         try:
-            envelope = json.loads(raw)
-            message_id = envelope.get("messageId")
+            msg = json.loads(payload)
+            _LOGGER.debug("Tuya MQTT raw message: %.300s", payload)
 
-            payload_b64 = envelope.get("payload")
-            if not payload_b64:
-                if message_id:
-                    await ws.send_str(json.dumps({"messageId": message_id}))
-                return
+            biz_data = msg.get("bizData")
 
-            outer = json.loads(base64.b64decode(payload_b64))
-            biz_data = outer.get("bizData")
+            # Some message formats encrypt the entire inner message under a
+            # top-level "data" field rather than inside bizData.
+            if biz_data is None and "data" in msg:
+                pv = str(msg.get("pv", "1.0"))
+                msg = json.loads(_decrypt_payload(msg["data"], pv, self._access_secret))
+                biz_data = msg.get("bizData")
 
             if isinstance(biz_data, str):
-                # Old protocol: bizData is an AES-ECB encrypted string
                 biz_data = json.loads(_decrypt_payload(biz_data, "1.0", self._access_secret))
             elif isinstance(biz_data, dict) and "data" in biz_data:
-                # New protocol: bizData = {"pv": "2.0", "t": ..., "data": "<encrypted>"}
                 pv = str(biz_data.get("pv", "1.0"))
                 biz_data = json.loads(_decrypt_payload(biz_data["data"], pv, self._access_secret))
 
         except Exception:
-            _LOGGER.exception("Failed to process Pulsar message: %.200s", raw)
-            if message_id:
-                try:
-                    await ws.send_str(json.dumps({"messageId": message_id}))
-                except Exception:
-                    pass  # ws may be closing; losing this ack is acceptable
+            _LOGGER.exception("Failed to process Tuya MQTT message: %.200s", payload[:200])
             return
 
-        # Phase 2: dispatch to handlers. Withhold the ack on failure so Tuya
-        # redelivers (at-least-once semantics), but give up after
-        # _MAX_HANDLER_RETRIES to avoid an infinite loop when the failure is
-        # permanent (e.g. a malformed-but-parseable message from the broker).
         try:
             for handler in self._handlers:
-                await handler({**outer, "bizData": biz_data})
+                await handler({**msg, "bizData": biz_data})
         except Exception:
-            _LOGGER.exception("Pulsar message handler raised an exception")
-            if message_id:
-                failures = self._handler_failures.get(message_id, 0) + 1
-                if failures >= _MAX_HANDLER_RETRIES:
-                    _LOGGER.warning(
-                        "Giving up on message %s after %d failures; acking to stop redelivery",
-                        message_id,
-                        failures,
-                    )
-                    self._handler_failures.pop(message_id, None)
-                    try:
-                        await ws.send_str(json.dumps({"messageId": message_id}))
-                    except Exception:
-                        pass
-                else:
-                    self._handler_failures[message_id] = failures
-            return
-
-        self._handler_failures.pop(message_id, None)
-        if message_id:
-            await ws.send_str(json.dumps({"messageId": message_id}))
+            _LOGGER.exception("Tuya MQTT message handler raised an exception")
