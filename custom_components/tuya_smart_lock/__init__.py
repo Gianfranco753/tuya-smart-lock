@@ -213,12 +213,16 @@ def _make_disconnect_callback(hass: HomeAssistant, notification_id: str):
         pn_create(
             hass,
             (
-                "The Tuya Smart Lock real-time connection (Pulsar) could not be "
-                "re-established after several attempts. Device events will fall back "
-                "to polling until the connection recovers. Check your network and "
-                "Tuya IoT Platform credentials."
+                "The Tuya Smart Lock real-time connection (Pulsar WebSocket) could not "
+                "be established. Most likely the Message Service is not configured.\n\n"
+                "**To fix this:**\n"
+                "1. Go to [Tuya IoT Platform](https://iot.tuya.com) → your cloud project\n"
+                "2. Open **Service API** tab → subscribe to **Device Status Notification**\n"
+                "3. Go to **Message Service** → enable it for your project\n"
+                "4. Reload this integration\n\n"
+                "Until fixed, device state updates fall back to polling."
             ),
-            title="Tuya Smart Lock: real-time connection lost",
+            title="Tuya Smart Lock: real-time connection failed — action required",
             notification_id=notification_id,
         )
 

@@ -123,12 +123,10 @@ class TuyaApiClient:
         }
 
     async def async_get_mq_config(self) -> dict:
-        """Fetch the Pulsar message-queue connection config from Tuya's API.
+        """Fetch WebSocket connection config from Tuya's access-config API.
 
-        Returns the `result` dict which contains: url, username, password,
-        client_id, expire_time, source_topic, sink_topic.
-        The password is computed server-side and must be used as-is — do not
-        try to derive it locally.
+        Returns the full `result` dict so callers can log and inspect it.
+        The password is server-computed and must be used as-is.
         """
         # _ensure_token must run before we read self._uid, which is populated
         # as a side-effect of the token exchange.
@@ -143,6 +141,15 @@ class TuyaApiClient:
                 "topics": "device.status",
                 "msg_encrypted_version": "2.0",
             },
+        )
+        loggable_result = {
+            k: ("***" if k == "password" else v)
+            for k, v in (resp.get("result") or {}).items()
+        }
+        _LOGGER.info(
+            "Tuya access-config response: success=%s result=%s",
+            resp.get("success"),
+            loggable_result,
         )
         if not resp.get("success"):
             raise TuyaApiError(f"Failed to get MQ config: {resp.get('msg')}")

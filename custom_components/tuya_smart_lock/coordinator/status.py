@@ -41,7 +41,9 @@ class TuyaLockStatusCoordinator(DataUpdateCoordinator[dict]):
         except (TuyaApiError, ConnectionError) as err:
             raise UpdateFailed(f"Error communicating with Tuya Cloud API: {err}") from err
 
-        return {dp["code"]: dp["value"] for dp in raw}
+        data = {dp["code"]: dp["value"] for dp in raw}
+        _LOGGER.debug("Status data: %s", data)
+        return data
 
     @callback
     def async_push_update(self, new_data: dict) -> None:

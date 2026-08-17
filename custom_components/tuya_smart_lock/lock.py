@@ -132,13 +132,18 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
         command_in_progress = self._attr_is_locking or self._attr_is_unlocking
         if not command_in_progress:
             data = self.coordinator.data or {}
+            _LOGGER.debug("Lock coordinator data keys: %s", list(data.keys()))
             open_close = data.get("open_close")
             if open_close is not None:
                 self._attr_is_locked = not _is_open(open_close)
+                _LOGGER.debug("open_close=%s → is_locked=%s", open_close, self._attr_is_locked)
+            else:
+                _LOGGER.debug("open_close not in coordinator data, is_locked unchanged (%s)", self._attr_is_locked)
         self.async_write_ha_state()
 
     async def async_lock(self, **kwargs) -> None:
         """Lock the door."""
+        _LOGGER.debug("Lock command issued for %s", self._device_id)
         self._attr_is_locking = True
         self.async_write_ha_state()
 
@@ -156,6 +161,7 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
 
     async def async_unlock(self, **kwargs) -> None:
         """Unlock the door."""
+        _LOGGER.debug("Unlock command issued for %s", self._device_id)
         self._attr_is_unlocking = True
         self.async_write_ha_state()
 
@@ -172,15 +178,23 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
         self.async_write_ha_state()
 
         if success:
-            # Fallback re-lock in case Pulsar doesn't deliver the close event.
-            # Read auto_lock_time dynamically so changes via the number entity
-            # take effect immediately without restarting HA.
+            # After the hardware's auto-lock delay, poll the actual bolt state
+            # rather than guessing. A blind optimistic set-to-locked would be
+            # overridden by the next coordinator poll anyway if the bolt hasn't
+            # engaged yet, creating a confusing flip.
             auto_lock_time = (self.coordinator.data or {}).get(
                 "auto_lock_time", DEFAULT_AUTO_LOCK_DELAY
             )
+            _LOGGER.debug(
+                "Unlock succeeded; scheduling status refresh in %ss (auto_lock_time=%s)",
+                auto_lock_time + 1,
+                auto_lock_time,
+            )
             if self._relock_handle is not None:
                 self._relock_handle.cancel()
-            self._relock_handle = self.hass.loop.call_later(auto_lock_time + 1, self._set_locked)
+            self._relock_handle = self.hass.loop.call_later(
+                auto_lock_time + 1, self._schedule_status_refresh
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel any pending relock timer when the entity is removed."""
@@ -189,11 +203,11 @@ class TuyaSmartLock(CoordinatorEntity, LockEntity):
             self._relock_handle.cancel()
             self._relock_handle = None
 
-    def _set_locked(self) -> None:
-        """Fallback: reset state to locked after the auto-lock delay."""
+    def _schedule_status_refresh(self) -> None:
+        """After the auto-lock delay, fetch the real bolt state from the hardware."""
+        _LOGGER.debug("Auto-lock window elapsed, requesting status refresh for %s", self._device_id)
         self._relock_handle = None
-        self._attr_is_locked = True
-        self.async_write_ha_state()
+        self.hass.async_create_task(self.coordinator.async_request_refresh())
 
     async def async_create_temp_password(self, code: str, name: str, duration_hours: int) -> None:
         """Create a temporary password on the lock."""
